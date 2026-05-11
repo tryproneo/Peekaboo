@@ -17,7 +17,7 @@ The CLI is signed, notarized, and lives in [steipete/homebrew-tap](https://githu
 
 ```bash
 brew install steipete/tap/peekaboo
-peekaboo --version
+peekaboo-mcp --version
 ```
 
 Update with `brew upgrade steipete/tap/peekaboo`.
@@ -27,7 +27,7 @@ Update with `brew upgrade steipete/tap/peekaboo`.
 The npm package wraps the same CLI plus an MCP shim, so you can launch the server with `npx`:
 
 ```bash
-npx -y @steipete/peekaboo mcp
+npx -y @steipete/peekaboo-mcp mcp serve
 ```
 
 This is the form you point Codex, Claude Code, and Cursor at. See [MCP.md](MCP.md).
@@ -45,7 +45,7 @@ git clone --recurse-submodules https://github.com/openclaw/Peekaboo.git
 cd Peekaboo
 pnpm install
 pnpm run build:cli         # debug build
-pnpm run build:swift:all   # universal release
+pnpm run build:mcp:universal   # universal release
 ```
 
 The output binary lives under `Apps/CLI/.build/...`. See [building.md](building.md) for signing, notarization, and the `pnpm run poltergeist:haunt` rapid-rebuild loop.
@@ -53,9 +53,29 @@ The output binary lives under `Apps/CLI/.build/...`. See [building.md](building.
 ## Verify
 
 ```bash
-peekaboo --version
-peekaboo permissions status
-peekaboo list apps
+peekaboo-mcp --version
+peekaboo-mcp mcp serve
 ```
 
 If any of those error out, jump to [permissions.md](permissions.md).
+
+
+## MCP client registration
+
+Codex:
+
+```bash
+codex mcp add peekaboo -- npx -y @steipete/peekaboo-mcp mcp serve
+```
+
+Claude Code:
+
+```bash
+claude mcp add peekaboo -- npx -y @steipete/peekaboo-mcp mcp serve
+```
+
+Sanity check:
+
+```bash
+peekaboo-mcp mcp serve
+```

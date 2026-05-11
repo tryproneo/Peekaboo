@@ -234,6 +234,33 @@ jobs:
         run: |
           swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION
 
+
+  mcp-artifacts:
+    name: MCP-only artifact checks
+    runs-on: macos-latest
+    needs: peekaboo-cli
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Build arm64 MCP artifact
+        run: pnpm run build:mcp:arm64
+
+      - name: Verify MCP binary exists
+        run: test -x ./peekaboo-mcp
+
+      - name: Verify CLI help excludes provider paths
+        run: |
+          ./peekaboo-mcp --help > /tmp/peekaboo-help.txt
+          ! rg -n "provider|providers|analyze image" /tmp/peekaboo-help.txt
+
+      - name: Verify MCP startup help
+        run: |
+          ./peekaboo-mcp mcp --help
+          ./peekaboo-mcp mcp serve --help
+
   tachikoma:
     name: Tachikoma build & tests
     runs-on: macos-latest

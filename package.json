@@ -6,11 +6,10 @@
   "type": "module",
   "main": "peekaboo-mcp.js",
   "bin": {
-    "peekaboo": "peekaboo",
     "peekaboo-mcp": "peekaboo-mcp.js"
   },
   "files": [
-    "peekaboo",
+    "peekaboo-mcp",
     "peekaboo-mcp.js",
     "README.md",
     "LICENSE"
@@ -18,8 +17,8 @@
   "scripts": {
     "build:cli": "swift build --package-path Apps/CLI",
     "build:cli:release": "swift build --configuration release --package-path Apps/CLI",
-    "build:swift": "./scripts/build-swift-arm.sh",
-    "build:swift:all": "./scripts/build-swift-universal.sh",
+    "build:swift": "PEEKABOO_RELEASE_BINARY_NAME=peekaboo-mcp ./scripts/build-swift-arm.sh",
+    "build:swift:all": "PEEKABOO_RELEASE_BINARY_NAME=peekaboo-mcp ./scripts/build-swift-universal.sh",
     "build:polter": "pnpm run polter -- peekaboo -- --version",
     "app:restart": "./scripts/restart-peekaboo.sh",
     "build": "pnpm run build:cli",
@@ -51,7 +50,9 @@
     "poltergeist:status": "./scripts/poltergeist-wrapper.sh status",
     "poltergeist:logs": "./scripts/poltergeist-wrapper.sh logs",
     "oracle": "pnpm -C ../oracle oracle",
-    "postinstall": "chmod +x peekaboo peekaboo-mcp.js 2>/dev/null || true"
+    "postinstall": "chmod +x peekaboo-mcp peekaboo-mcp.js 2>/dev/null || true",
+    "build:mcp:arm64": "pnpm run build:swift",
+    "build:mcp:universal": "pnpm run build:swift:all"
   },
   "repository": {
     "type": "git",

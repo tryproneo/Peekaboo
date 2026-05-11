@@ -112,13 +112,13 @@ echo -e "${BLUE}Building version: ${VERSION}${NC}"
 if [ "$UNIVERSAL" = true ]; then
     echo -e "\n${BLUE}Building universal binary...${NC}"
     BUILD_SCRIPT="build:swift:all"
-    CLI_ARTIFACT_DIR="peekaboo-macos-universal"
-    CLI_TARBALL_NAME="peekaboo-macos-universal.tar.gz"
+    CLI_ARTIFACT_DIR="peekaboo-mcp-macos-universal"
+    CLI_TARBALL_NAME="peekaboo-mcp-macos-universal.tar.gz"
 else
     echo -e "\n${BLUE}Building arm64 binary...${NC}"
     BUILD_SCRIPT="build:swift"
-    CLI_ARTIFACT_DIR="peekaboo-macos-arm64"
-    CLI_TARBALL_NAME="peekaboo-macos-arm64.tar.gz"
+    CLI_ARTIFACT_DIR="peekaboo-mcp-macos-arm64"
+    CLI_TARBALL_NAME="peekaboo-mcp-macos-arm64.tar.gz"
 fi
 
 if ! pnpm run "$BUILD_SCRIPT"; then
@@ -134,7 +134,7 @@ CLI_RELEASE_DIR="$BUILD_DIR/$CLI_ARTIFACT_DIR"
 mkdir -p "$CLI_RELEASE_DIR"
 
 # Copy files for CLI release
-cp "$PROJECT_ROOT/peekaboo" "$CLI_RELEASE_DIR/"
+cp "$PROJECT_ROOT/peekaboo-mcp" "$CLI_RELEASE_DIR/"
 cp "$PROJECT_ROOT/LICENSE" "$CLI_RELEASE_DIR/"
 echo "$VERSION" > "$CLI_RELEASE_DIR/VERSION"
 
@@ -148,26 +148,23 @@ Lightning-fast macOS screenshots & AI vision analysis.
 
 \`\`\`bash
 # Make binary executable
-chmod +x peekaboo
+chmod +x peekaboo-mcp
 
 # Move to your PATH
-sudo mv peekaboo /usr/local/bin/
+sudo mv peekaboo-mcp /usr/local/bin/
 
 # Verify installation
-peekaboo --version
+peekaboo-mcp --version
 \`\`\`
 
 ## Quick Start
 
 \`\`\`bash
 # Capture screenshot
-peekaboo image --app Safari --path screenshot.png
+peekaboo-mcp mcp serve
 
-# List applications
-peekaboo list apps
-
-# Analyze image with AI
-peekaboo analyze image.png "What is shown?"
+# Print MCP tool list
+peekaboo-mcp mcp tools list
 \`\`\`
 
 ## Documentation
@@ -322,7 +319,7 @@ fi
 echo -e "\n${GREEN}🎉 Release build complete!${NC}"
 echo -e "${BLUE}Next steps:${NC}"
 echo "1. Review artifacts in: $RELEASE_DIR"
-echo "2. Test the binary: tar -xzf $RELEASE_DIR/$CLI_TARBALL_NAME && ./$CLI_ARTIFACT_DIR/peekaboo --version"
+echo "2. Test the binary: tar -xzf $RELEASE_DIR/$CLI_TARBALL_NAME && ./$CLI_ARTIFACT_DIR/peekaboo-mcp --version"
 if [ "$CREATE_GITHUB_RELEASE" = false ]; then
     echo "3. Create GitHub release: $0 --create-github-release"
 fi

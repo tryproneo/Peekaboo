@@ -702,11 +702,12 @@ function buildAndVerifyPackage() {
   logStep('Build and Package Verification');
 
   const requireUniversal = process.env.PEEKABOO_REQUIRE_UNIVERSAL === '1';
+  const releaseBinaryName = 'peekaboo-mcp';
   const buildScript = requireUniversal ? './scripts/build-swift-universal.sh' : './scripts/build-swift-arm.sh';
   const buildLabel = requireUniversal ? 'Swift universal build' : 'Swift arm64 build';
 
   // Build Swift binary (stamps Info.plist and writes ./peekaboo)
-  if (!execWithOutput(buildScript, buildLabel)) {
+  if (!execWithOutput(`PEEKABOO_RELEASE_BINARY_NAME=${releaseBinaryName} ${buildScript}`, buildLabel)) {
     logError('Swift build failed');
     return false;
   }
@@ -729,7 +730,7 @@ function buildAndVerifyPackage() {
 
   // Verify critical files are included
   const requiredFiles = [
-    'peekaboo',
+    'peekaboo-mcp',
     'peekaboo-mcp.js',
     'README.md',
     'LICENSE'
@@ -749,12 +750,12 @@ function buildAndVerifyPackage() {
   logSuccess('All required files included in package');
 
   // Verify peekaboo binary
-  log('Verifying peekaboo binary...', colors.cyan);
-  const binaryPath = join(projectRoot, 'peekaboo');
+  log('Verifying peekaboo-mcp binary...', colors.cyan);
+  const binaryPath = join(projectRoot, releaseBinaryName);
   
   // Check if binary exists
   if (!existsSync(binaryPath)) {
-    logError('peekaboo binary not found');
+    logError('peekaboo-mcp binary not found');
     return false;
   }
   
@@ -763,7 +764,7 @@ function buildAndVerifyPackage() {
     const stats = exec(`stat -f "%Lp" "${binaryPath}" 2>/dev/null || stat -c "%a" "${binaryPath}"`);
     const perms = parseInt(stats, 8);
     if ((perms & 0o111) === 0) {
-      logError('peekaboo binary is not executable');
+      logError('peekaboo-mcp binary is not executable');
       return false;
     }
   } catch (error) {
@@ -777,12 +778,12 @@ function buildAndVerifyPackage() {
     const hasArm64 = lipoOutput.includes('arm64');
     const hasX86 = lipoOutput.includes('x86_64');
     if (!hasArm64) {
-      logError('peekaboo binary is missing arm64');
+      logError('peekaboo-mcp binary is missing arm64');
       logError(`Found: ${lipoOutput}`);
       return false;
     }
     if (process.env.PEEKABOO_REQUIRE_UNIVERSAL === '1' && !hasX86) {
-      logError('peekaboo binary does not contain x86_64 (PEEKABOO_REQUIRE_UNIVERSAL=1)');
+      logError('peekaboo-mcp binary does not contain x86_64 (PEEKABOO_REQUIRE_UNIVERSAL=1)');
       logError(`Found: ${lipoOutput}`);
       return false;
     }
@@ -800,12 +801,12 @@ function buildAndVerifyPackage() {
   try {
     const helpOutput = exec(`"${binaryPath}" --help`);
     if (!helpOutput || helpOutput.length === 0) {
-      logError('peekaboo binary does not respond to --help command');
+      logError('peekaboo-mcp binary does not respond to --help command');
       return false;
     }
     logSuccess('Binary responds correctly to --help command');
   } catch (error) {
-    logError('peekaboo binary failed to execute with --help');
+    logError('peekaboo-mcp binary failed to execute with --help');
     logError(`Error: ${error.message}`);
     return false;
   }

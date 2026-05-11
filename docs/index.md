@@ -11,7 +11,7 @@ read_when:
 
 Peekaboo is a macOS automation toolkit for humans and agents. It captures pixels, reads the accessibility tree, drives input, and ships an agent runtime plus an MCP server so AI clients (Codex, Claude Code, Cursor) can drive the desktop with the same primitives you'd use from the shell.
 
-> **TL;DR** — `brew install steipete/tap/peekaboo`, grant Screen Recording + Accessibility, then `peekaboo agent "open Safari and search for Peekaboo"`.
+> **TL;DR** — `brew install steipete/tap/peekaboo`, grant Screen Recording + Accessibility, then `peekaboo-mcp mcp serve`.
 
 ## Where to start
 
@@ -38,8 +38,8 @@ Peekaboo is a macOS automation toolkit for humans and agents. It captures pixels
 
 | Surface | Use it for | Entry point |
 | --- | --- | --- |
-| **CLI** | scripts, ad-hoc captures, CI | `brew install steipete/tap/peekaboo` |
-| **MCP server** | Codex, Claude Code, Cursor | `npx @steipete/peekaboo mcp` |
+| **MCP CLI** | MCP startup for Codex/Claude/Cursor | `brew install steipete/tap/peekaboo` |
+| **MCP server** | Codex, Claude Code, Cursor | `npx @steipete/peekaboo-mcp mcp serve` |
 | **Mac app** | menu-bar visualizer, permission prompts | [Releases](https://github.com/openclaw/Peekaboo/releases/latest) |
 | **Library** | embed in Swift apps and tools | `Core/PeekabooCore` (Swift Package) |
 
