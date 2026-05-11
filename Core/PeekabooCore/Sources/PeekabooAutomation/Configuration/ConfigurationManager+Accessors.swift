@@ -34,52 +34,31 @@ extension ConfigurationManager {
             cliValue: cliValue,
             envVar: "PEEKABOO_AI_PROVIDERS",
             configValue: self.configuration?.aiProviders?.providers,
-            defaultValue: "openai/gpt-5.5,anthropic/claude-opus-4-7")
+            defaultValue: "openrouter/x-ai/grok-4.3,ollama/llava:latest")
     }
 
     /// Get OpenAI API key with proper precedence
-    public func getOpenAIAPIKey() -> String? {
-        if let envValue = self.environmentValue(for: "OPENAI_API_KEY") {
+    public func getOpenRouterAPIKey() -> String? {
+        if let envValue = self.environmentValue(for: "OPENROUTER_API_KEY") {
             return envValue
         }
 
-        if let token = self.validOAuthAccessToken(prefix: "OPENAI") {
+        if let token = self.validOAuthAccessToken(prefix: "OPENROUTER") {
             return token
         }
 
-        if let credValue = credentials["OPENAI_API_KEY"] {
+        if let credValue = credentials["OPENROUTER_API_KEY"] {
             return credValue
         }
 
-        if let configValue = configuration?.aiProviders?.openaiApiKey {
+        if let configValue = configuration?.aiProviders?.openrouterApiKey {
             return configValue
         }
 
         return nil
     }
 
-    /// Get Anthropic API key with proper precedence
-    public func getAnthropicAPIKey() -> String? {
-        if let envValue = self.environmentValue(for: "ANTHROPIC_API_KEY") {
-            return envValue
-        }
-
-        if let token = self.validOAuthAccessToken(prefix: "ANTHROPIC") {
-            return token
-        }
-
-        if let credValue = credentials["ANTHROPIC_API_KEY"] {
-            return credValue
-        }
-
-        if let configValue = configuration?.aiProviders?.anthropicApiKey {
-            return configValue
-        }
-
-        return nil
-    }
-
-    /// Get Gemini API key with proper precedence
+    /// Get OpenRouter base URL with proper precedence
     public func getGeminiAPIKey() -> String? {
         for key in ["GEMINI_API_KEY", "GOOGLE_API_KEY"] {
             if let envValue = self.environmentValue(for: key) {
@@ -139,12 +118,14 @@ extension ConfigurationManager {
         guard let providers = self.configuration?.aiProviders?.providers,
               let provider = self.parseFirstProvider(providers)
         else {
-            return "anthropic"
+            return "openrouter"
         }
 
         switch provider.lowercased() {
-        case "gemini", "google":
-            return "google"
+        case "openrouter", "ollama":
+            return provider
+        case "openai", "anthropic", "gemini", "google", "grok", "xai":
+            return "openrouter"
         default:
             return Provider.from(identifier: provider).identifier
         }

@@ -48,7 +48,7 @@ private enum ConfigurationDefaults {
     static let configurationTemplate = """
     {
       "aiProviders": {
-        "providers": "openai/gpt-5.5,anthropic/claude-opus-4-7"
+        "providers": "openrouter/x-ai/grok-4.3,ollama/llava:latest"
       },
       "defaults": {
         "savePath": "~/Desktop/Screenshots",

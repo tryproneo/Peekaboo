@@ -43,19 +43,20 @@ public struct Configuration: Codable {
     /// and connection settings. Supports both cloud-based (OpenAI) and local (Ollama) providers.
     public struct AIProviderConfig: Codable {
         public var providers: String?
-        public var openaiApiKey: String?
-        public var anthropicApiKey: String?
+        public var openrouterApiKey: String?
+        public var openrouterBaseUrl: String?
         public var ollamaBaseUrl: String?
 
         public init(
             providers: String? = nil,
-            openaiApiKey: String? = nil,
-            anthropicApiKey: String? = nil,
+            openrouterApiKey: String? = nil,
+            openrouterBaseUrl: String? = "https://openrouter.ai/api/v1",
+
             ollamaBaseUrl: String? = nil)
         {
             self.providers = providers
-            self.openaiApiKey = openaiApiKey
-            self.anthropicApiKey = anthropicApiKey
+            self.openrouterApiKey = openrouterApiKey
+            self.openrouterBaseUrl = openrouterBaseUrl
             self.ollamaBaseUrl = ollamaBaseUrl
         }
     }

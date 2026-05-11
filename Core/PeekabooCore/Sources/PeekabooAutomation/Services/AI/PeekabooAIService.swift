@@ -105,7 +105,7 @@ public final class PeekabooAIService {
         TachikomaConfiguration.profileDirectoryName = ".peekaboo"
         _ = configuration.loadConfiguration()
         self.resolvedModels = Self.resolveAvailableModels(configuration: configuration)
-        self.defaultModel = self.resolvedModels.first ?? .openai(.gpt55)
+        self.defaultModel = self.resolvedModels.first ?? .openRouter("x-ai/grok-4.3")
         // Rely on TachikomaConfiguration to load from env/credentials (profile set at startup)
     }
 
@@ -209,24 +209,8 @@ public final class PeekabooAIService {
             let loose = LanguageModel.parse(from: modelString)
 
             switch provider {
-            case "openai":
-                if case .openai = loose { return loose }
-                return .openai(.custom(modelString))
-            case "anthropic":
-                if case .anthropic = loose { return loose }
-                return .anthropic(.custom(modelString))
-            case "google", "gemini":
-                if case .google = loose { return loose }
-                return nil
-            case "mistral":
-                if case .mistral = loose { return loose }
-                return nil
-            case "groq":
-                if case .groq = loose { return loose }
-                return nil
-            case "grok", "xai":
-                if case .grok = loose { return loose }
-                return .grok(.custom(modelString))
+            case "openrouter":
+                return .openRouter(modelString)
             case "ollama":
                 // For Ollama, prefer preserving the exact model id string.
                 // Heuristics for custom model capabilities live in Tachikoma (LanguageModel.Ollama).
@@ -258,11 +242,7 @@ public final class PeekabooAIService {
 
         if !parsed.isEmpty { return parsed }
 
-        // Fallback: prefer Anthropic if a key is present, else OpenAI
-        if let key = configuration.getAnthropicAPIKey(), !key.isEmpty {
-            return [.anthropic(.opus47)]
-        }
-        return [.openai(.gpt55), .anthropic(.opus47)]
+        return [.openRouter("x-ai/grok-4.3"), .ollama(.llava)]
     }
 
     private static func providerAndModelName(for model: LanguageModel) -> (provider: String, model: String) {

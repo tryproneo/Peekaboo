@@ -82,8 +82,7 @@ public enum AIProviderParser {
     /// Determine the default model based on available providers and configuration
     public static func determineDefaultModel(
         from providerList: String,
-        hasOpenAI: Bool = false,
-        hasAnthropic: Bool = false,
+        hasOpenRouter: Bool = false,
         hasOllama: Bool = false,
         configuredDefault: String? = nil) -> String
     {
@@ -96,10 +95,8 @@ public enum AIProviderParser {
         let configs = self.parseList(providerList)
         for config in configs {
             switch config.provider.lowercased() {
-            case "openai":
-                if hasOpenAI { return "gpt-5.5" }
-            case "anthropic":
-                if hasAnthropic { return "claude-opus-4-7" }
+            case "openrouter":
+                if hasOpenRouter { return config.model }
             case "ollama":
                 if hasOllama { return config.model }
             default:
@@ -108,12 +105,12 @@ public enum AIProviderParser {
         }
 
         // Fall back to hardcoded defaults based on what's available
-        if hasAnthropic {
-            return "claude-opus-4-7"
-        } else if hasOpenAI {
-            return "gpt-5.5"
+        if hasOpenRouter {
+            return "x-ai/grok-4.3"
+        } else if hasOllama {
+            return "llava:latest"
         } else {
-            return "gpt-5.5"
+            return "x-ai/grok-4.3"
         }
     }
 }

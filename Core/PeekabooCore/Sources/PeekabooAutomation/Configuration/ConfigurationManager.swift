@@ -123,7 +123,7 @@ public final class ConfigurationManager: @unchecked Sendable {
     }
 
     private func migrateHardcodedCredentials(from config: Configuration) throws {
-        guard let apiKey = config.aiProviders?.openaiApiKey,
+        guard let apiKey = config.aiProviders?.openrouterApiKey,
               !apiKey.hasPrefix("${"),
               !apiKey.isEmpty
         else {
@@ -133,7 +133,7 @@ public final class ConfigurationManager: @unchecked Sendable {
         try self.saveCredentials(["OPENAI_API_KEY": apiKey])
 
         var updatedConfig = config
-        updatedConfig.aiProviders?.openaiApiKey = nil
+        updatedConfig.aiProviders?.openrouterApiKey = nil
         let data = try JSONCoding.encoder.encode(updatedConfig)
         try data.write(to: URL(fileURLWithPath: Self.configPath), options: .atomic)
     }

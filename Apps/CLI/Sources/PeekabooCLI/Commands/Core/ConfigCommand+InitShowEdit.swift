@@ -153,7 +153,7 @@ extension ConfigCommand {
             let effectiveConfig: [String: Any] = [
                 "aiProviders": [
                     "providers": self.configManager.getAIProviders(),
-                    "openaiApiKey": self.configManager.getOpenAIAPIKey() != nil ? "***SET***" : "NOT SET",
+                    "openrouterApiKey": self.configManager.getOpenRouterAPIKey() != nil ? "***SET***" : "NOT SET",
                     "ollamaBaseUrl": self.configManager.getOllamaBaseURL(),
                 ],
                 "defaults": [
@@ -181,7 +181,7 @@ extension ConfigCommand {
                 print()
                 print("AI Providers:")
                 print("  Providers: \(self.configManager.getAIProviders())")
-                print("  OpenAI API Key: \(self.configManager.getOpenAIAPIKey() != nil ? "***SET***" : "NOT SET")")
+                print("  OpenRouter API Key: \(self.configManager.getOpenRouterAPIKey() != nil ? "***SET***" : "NOT SET")")
                 print("  Ollama Base URL: \(self.configManager.getOllamaBaseURL())")
                 print()
                 print("Defaults:")

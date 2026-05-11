@@ -11,7 +11,7 @@ extension ConfigCommand {
             abstract: "Add and validate a provider credential (API key)"
         )
 
-        @Argument(help: "Provider id (openai|anthropic|grok|xai|gemini)")
+        @Argument(help: "Provider id (openrouter)")
         var provider: String
 
         @Argument(help: "Secret value (API key)")
@@ -25,7 +25,7 @@ extension ConfigCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.prepare(using: runtime)
             guard let pid = TKProviderId.normalize(self.provider) else {
-                self.output.error(code: "INVALID_PROVIDER", message: "Supported: openai, anthropic, grok, xai, gemini")
+                self.output.error(code: "INVALID_PROVIDER", message: "Supported: openrouter")
                 throw ExitCode.failure
             }
 
@@ -61,7 +61,7 @@ extension ConfigCommand {
     struct LoginCommand: ConfigRuntimeCommand {
         static let commandDescription = CommandDescription(
             commandName: "login",
-            abstract: "OAuth login for supported providers (openai, anthropic)"
+            abstract: "OAuth login for supported providers (openrouter)"
         )
 
         @Argument(help: "Provider id (openai|anthropic)")
@@ -78,7 +78,7 @@ extension ConfigCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.prepare(using: runtime)
             guard let pid = TKProviderId.normalize(self.provider), pid.supportsOAuth else {
-                self.output.error(code: "INVALID_PROVIDER", message: "OAuth supported: openai, anthropic")
+                self.output.error(code: "INVALID_PROVIDER", message: "OAuth supported: openrouter")
                 throw ExitCode.failure
             }
             let timeout = self.timeoutSeconds > 0 ? self.timeoutSeconds : 30

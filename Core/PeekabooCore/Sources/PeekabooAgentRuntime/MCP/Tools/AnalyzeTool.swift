@@ -32,7 +32,7 @@ public struct AnalyzeTool: MCPTool {
         { "image_path": "/tmp/chart.png", "question": "Which category has the highest value in this bar chart?" }
         The AI will analyze the image and attempt to answer your question based on its visual content.
 
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
+        \(PeekabooMCPVersion.banner) using openrouter/x-ai/grok-4.3, ollama/llava:latest
         """
     }
 
@@ -47,7 +47,7 @@ public struct AnalyzeTool: MCPTool {
                     properties: [
                         "type": SchemaBuilder.string(
                             description: "AI provider, default: auto. 'auto' uses server's",
-                            enum: ["auto", "ollama", "openai", "anthropic", "grok"],
+                            enum: ["auto", "openrouter", "ollama"],
                             default: "auto"),
                         "model": SchemaBuilder.string(
                             description: "Optional. Model name. If omitted, uses server defaults."),
@@ -175,42 +175,25 @@ public struct AnalyzeTool: MCPTool {
         }
 
         switch provider {
-        case "openai":
-            guard let model else { return .openai(.gpt55) }
-            if Self.isUnsupportedLegacyModel(provider: provider, model: model) {
-                throw PeekabooError.invalidInput("Unsupported OpenAI model: \(model)")
-            }
-            if let parsed = LanguageModel.parse(from: model), case .openai = parsed {
-                return parsed
-            }
-            return .openai(.custom(model))
-        case "anthropic":
-            guard let model else { return .anthropic(.opus47) }
-            if Self.isUnsupportedLegacyModel(provider: provider, model: model) {
-                throw PeekabooError.invalidInput("Unsupported Anthropic model: \(model)")
-            }
-            if let parsed = LanguageModel.parse(from: model), case .anthropic = parsed {
-                return parsed
-            }
-            return .anthropic(.custom(model))
-        case "grok", "xai":
-            guard let model else { return .grok(.grok43) }
-            if Self.isUnsupportedLegacyModel(provider: provider, model: model) {
-                throw PeekabooError.invalidInput("Unsupported Grok model: \(model)")
-            }
-            if let parsed = LanguageModel.parse(from: model), case .grok = parsed {
-                return parsed
-            }
-            return .grok(.custom(model))
+        case "openrouter":
+            guard let model else { return .openRouter("x-ai/grok-4.3") }
+            return .openRouter(model)
         case "ollama":
             guard let model else { return .ollama(.llava) }
             return .ollama(.custom(model))
+        case "openai", "anthropic", "gemini", "google", "grok", "xai":
+            throw PeekabooError.invalidInput("Provider '\(provider)' is no longer supported. Migrate to openrouter/<model> or ollama/<model>.")
         default:
             throw PeekabooError.invalidInput("Unknown provider type: \(provider)")
         }
     }
 
     private static func isUnsupportedLegacyModel(provider: String, model: String) -> Bool {
+        false
+    }
+
+    /* legacy model compatibility removed
+
         let normalized = model.lowercased()
         let compact = normalized.replacingOccurrences(of: "-", with: "").replacingOccurrences(of: ".", with: "")
 
@@ -237,6 +220,7 @@ public struct AnalyzeTool: MCPTool {
 
         return false
     }
+    */
 }
 
 extension String {
