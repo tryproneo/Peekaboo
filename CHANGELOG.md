@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.2.1] - Unreleased
+## [3.2.1] - 2026-05-18
 
 ### Fixed
 - `peekaboo click --coords` now treats coordinates as target-window-relative when app/window target flags are supplied, reports resolved target metadata, and requires `--global-coords` for targeted global clicks.

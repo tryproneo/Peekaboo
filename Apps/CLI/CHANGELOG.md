@@ -5,7 +5,20 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.2.1] - Unreleased
+## [3.2.1] - 2026-05-18
+
+### Fixed
+- `peekaboo click --coords` now treats coordinates as target-window-relative when app/window target flags are supplied, reports resolved target metadata, and requires `--global-coords` for targeted global clicks.
+- `peekaboo-mcp` now shuts down cleanly during restart backoff and repairs executable permissions without shelling out through an install path.
+- `pnpm run peekaboo:dev` no longer depends on a hardcoded local checkout path.
+- `peekaboo agent` now tells models to use the current tool schema instead of stale tool names and arguments. Thanks @vyctorbrzezowski for #139.
+- AX element detection now honors traversal budgets and reports truncation when depth, count, or per-node child limits are reached. Thanks @vyctorbrzezowski for #140.
+- `peekaboo agent` and MCP clients now have an `inspect_ui` tool for AX-only UI text/control inspection without capturing screenshots. Thanks @vyctorbrzezowski for #141.
+- Window-mode capture now falls back to desktop-independent ScreenCaptureKit filters when multi-display setups cannot map a window to an enumerated display. Thanks @lonexreb for #147.
+- `peekaboo agent` guidance now routes AX-only observation through `inspect_ui` consistently while keeping screenshot-backed checks on `see`. Thanks @vyctorbrzezowski for #144.
+- Custom provider docs, CLI help, and macOS settings now prefer `${VAR}` API key references and shell examples that preserve them literally. Thanks @scotthuang for #142.
+- `peekaboo agent` now refreshes desktop context before each model turn and wires opt-in action verification through the configured capture strategy. Thanks @lonexreb for #148.
+- AX traversal budgets now have wider defaults plus CLI, MCP, and environment overrides for complex app trees. Thanks @widdowson for #150 and #151.
 
 ## [3.2.0] - 2026-05-15
 
