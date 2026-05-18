@@ -47,10 +47,9 @@ struct MenuBarElementCollector {
             if let menuItems = menu.children() {
                 self.appendMenuItems(
                     menuItems,
-                    depth: 1,
+                    state: MenuItemAppendState(depth: 1, budget: resolvedBudget),
                     elements: &elements,
                     elementIdMap: &elementIdMap,
-                    budget: resolvedBudget,
                     truncationInfo: &truncationInfo)
             }
         }
@@ -59,12 +58,13 @@ struct MenuBarElementCollector {
 
     private func appendMenuItems(
         _ items: [Element],
-        depth: Int,
+        state: MenuItemAppendState,
         elements: inout [DetectedElement],
         elementIdMap: inout [String: DetectedElement],
-        budget: AXTraversalBudget,
         truncationInfo: inout DetectionTruncationInfo?)
     {
+        let depth = state.depth
+        let budget = state.budget
         guard depth < budget.maxDepth else {
             truncationInfo = DetectionTruncationInfo.merge(
                 truncationInfo,
@@ -105,10 +105,9 @@ struct MenuBarElementCollector {
             if let submenu = item.children(), !submenu.isEmpty {
                 self.appendMenuItems(
                     submenu,
-                    depth: depth + 1,
+                    state: MenuItemAppendState(depth: depth + 1, budget: budget),
                     elements: &elements,
                     elementIdMap: &elementIdMap,
-                    budget: budget,
                     truncationInfo: &truncationInfo)
             }
         }
@@ -165,5 +164,10 @@ struct MenuBarElementCollector {
         }
 
         return nil
+    }
+
+    private struct MenuItemAppendState {
+        let depth: Int
+        let budget: AXTraversalBudget
     }
 }

@@ -110,11 +110,12 @@ public final class ElementDetectionService {
             truncationInfo = cached.truncationInfo
         } else {
             let collection = try await self.collectElementsWithTimeout(
-                window: windowResolution.window,
-                appElement: windowResolution.appElement,
-                appIsActive: targetApp.isActive,
-                allowWebFocus: allowWebFocus,
-                budget: budget,
+                ElementCollectionTimeoutRequest(
+                    window: windowResolution.window,
+                    appElement: windowResolution.appElement,
+                    appIsActive: targetApp.isActive,
+                    allowWebFocus: allowWebFocus,
+                    budget: budget),
                 elementIdMap: &elementIdMap)
             detectedElements = collection.elements
             truncationInfo = collection.truncationInfo
@@ -143,26 +144,23 @@ public final class ElementDetectionService {
 
 extension ElementDetectionService {
     private func collectElementsWithTimeout(
-        window: Element,
-        appElement: Element,
-        appIsActive: Bool,
-        allowWebFocus: Bool,
-        budget: AXTraversalBudget?,
-        elementIdMap: inout [String: DetectedElement],
-        timeoutSeconds: Double = 20.0) async throws -> (
+        _ timeoutRequest: ElementCollectionTimeoutRequest,
+        elementIdMap: inout [String: DetectedElement]) async throws -> (
         elements: [DetectedElement],
         truncationInfo: DetectionTruncationInfo?)
     {
-        let (elements, map, truncationInfo) = try await ElementDetectionTimeoutRunner.run(seconds: timeoutSeconds) {
-            let deadline = Date().addingTimeInterval(timeoutSeconds)
+        let (elements, map, truncationInfo) = try await ElementDetectionTimeoutRunner.run(
+            seconds: timeoutRequest.timeoutSeconds)
+        {
+            let deadline = Date().addingTimeInterval(timeoutRequest.timeoutSeconds)
             var localMap: [String: DetectedElement] = [:]
             let request = ElementCollectionRequest(
-                window: window,
-                appElement: appElement,
-                appIsActive: appIsActive,
-                allowWebFocus: allowWebFocus,
+                window: timeoutRequest.window,
+                appElement: timeoutRequest.appElement,
+                appIsActive: timeoutRequest.appIsActive,
+                allowWebFocus: timeoutRequest.allowWebFocus,
                 deadline: deadline,
-                budget: budget)
+                budget: timeoutRequest.budget)
             let collection = await self.collectElements(
                 request,
                 elementIdMap: &localMap)
@@ -239,4 +237,13 @@ private struct ElementCollectionRequest {
     let allowWebFocus: Bool
     let deadline: Date
     let budget: AXTraversalBudget?
+}
+
+private struct ElementCollectionTimeoutRequest {
+    let window: Element
+    let appElement: Element
+    let appIsActive: Bool
+    let allowWebFocus: Bool
+    let budget: AXTraversalBudget?
+    let timeoutSeconds = 20.0
 }
