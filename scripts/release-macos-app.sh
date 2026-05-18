@@ -293,7 +293,7 @@ if [[ "$NOTARIZE" == true ]]; then
   ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$NOTARY_ZIP"
 
   if [[ -n "${NOTARYTOOL_PROFILE:-}" ]]; then
-    xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$NOTARYTOOL_PROFILE" --wait
+    xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$NOTARYTOOL_PROFILE" --no-s3-acceleration --wait
   else
     [[ -n "${APP_STORE_CONNECT_KEY_ID:-}" ]] || fail "APP_STORE_CONNECT_KEY_ID missing"
     [[ -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ]] || fail "APP_STORE_CONNECT_ISSUER_ID missing"
@@ -318,6 +318,7 @@ EOF
       --key "$KEY_FILE" \
       --key-id "$APP_STORE_CONNECT_KEY_ID" \
       --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+      --no-s3-acceleration \
       --wait
     rm -f "$KEY_FILE"
   fi
