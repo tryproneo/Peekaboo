@@ -231,6 +231,14 @@ verify_app_entitlements() {
     fail "Signed app is missing AppleEvents entitlement: $app_path"
 }
 
+verify_developer_id_signature() {
+  local bundle="$1"
+  local authority
+
+  authority="$(codesign -dv --verbose=4 "$bundle" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+  [[ "$authority" == Developer\ ID\ Application:* ]] || fail "$bundle is signed with '$authority'; notarization requires a Developer ID Application certificate"
+}
+
 if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
   [[ -d "$WORKSPACE" ]] || fail "Workspace not found: $WORKSPACE"
   [[ -f "$SPARKLE_PRIVATE_KEY_FILE" ]] || fail "Sparkle private key not found: $SPARKLE_PRIVATE_KEY_FILE"
@@ -286,6 +294,9 @@ codesign --force --deep --options runtime --timestamp --sign "$SIGN_IDENTITY" "$
 codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS_PATH" --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 verify_app_entitlements "$APP_BUNDLE"
+if [[ "$NOTARIZE" == true ]]; then
+  verify_developer_id_signature "$APP_BUNDLE"
+fi
 
 if [[ "$NOTARIZE" == true ]]; then
   log "Submitting to Apple notarization"
