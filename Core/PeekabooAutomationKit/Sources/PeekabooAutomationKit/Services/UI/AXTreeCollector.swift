@@ -63,7 +63,7 @@ struct AXTreeCollector {
 
     func collect(window: Element, deadline: Date, budget: AXTraversalBudget? = nil) -> Result {
         var state = TraversalState()
-        let resolvedBudget = (budget ?? AXTraversalBudget()).normalizedForTraversal
+        let resolvedBudget = AXTraversalBudget.normalizedForTraversal(budget)
 
         // Traverse only the captured window. Walking the app root also visits sibling windows,
         // which makes `see --app` slower and returns elements outside the screenshot.
@@ -324,6 +324,10 @@ struct AXTreeCollector {
 }
 
 extension AXTraversalBudget {
+    static func normalizedForTraversal(_ budget: AXTraversalBudget?) -> AXTraversalBudget {
+        (budget ?? AXTraversalBudget.resolved()).normalizedForTraversal
+    }
+
     var normalizedForTraversal: AXTraversalBudget {
         AXTraversalBudget(
             maxDepth: max(0, self.maxDepth),
