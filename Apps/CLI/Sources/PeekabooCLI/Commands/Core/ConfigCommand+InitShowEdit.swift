@@ -16,7 +16,7 @@ extension ConfigCommand {
 
         @Flag(name: .long, help: "Force overwrite existing configuration")
         var force = false
-        @Option(name: .long, help: "Validation timeout in seconds (default 30)")
+        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
         var timeoutSeconds: Double = 30
         @RuntimeStorage var runtime: CommandRuntime?
 
@@ -78,7 +78,7 @@ extension ConfigCommand {
 
         @Flag(name: .long, help: "Show effective configuration (merged with environment)")
         var effective = false
-        @Option(name: .long, help: "Validation timeout in seconds (default 30)")
+        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
         var timeoutSeconds: Double = 30
         @RuntimeStorage var runtime: CommandRuntime?
 
@@ -205,6 +205,34 @@ extension ConfigCommand {
         }
     }
 
+    /// Display configured provider credential status.
+    struct StatusCommand: ConfigRuntimeCommand {
+        static let commandDescription = CommandDescription(
+            commandName: "status",
+            abstract: "Display provider credential status"
+        )
+
+        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
+        var timeoutSeconds: Double = 30
+        @RuntimeStorage var runtime: CommandRuntime?
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            self.prepare(using: runtime)
+            let reporter = ProviderStatusReporter(timeoutSeconds: self.timeoutSeconds)
+            if self.jsonOutput {
+                let summary = await reporter.summary()
+                let response = ProviderStatusResponse(
+                    success: true,
+                    data: summary,
+                    debugLogs: self.logger.getDebugLogs()
+                )
+                outputJSON(response, logger: self.logger)
+            } else {
+                await reporter.printSummary()
+            }
+        }
+    }
+
     /// Open configuration in an editor.
     struct EditCommand: ConfigRuntimeCommand {
         static let commandDescription = CommandDescription(
@@ -300,5 +328,16 @@ extension ConfigCommand {
                 throw ExitCode.failure
             }
         }
+    }
+}
+
+private struct ProviderStatusResponse: Encodable {
+    let success: Bool
+    let data: ProviderStatusSummary
+    let debugLogs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case success, data
+        case debugLogs = "debug_logs"
     }
 }
