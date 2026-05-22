@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.2.2] - Unreleased
+## [3.2.2] - 2026-05-22
 
 ### Added
 - GameBridge manifests now let `peekaboo see` expose Firestaff/SDL game UI zones from GPU-rendered windows. Thanks @yeager for #152.
