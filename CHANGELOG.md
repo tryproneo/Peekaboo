@@ -1,5 +1,7 @@
 # Changelog
 
+## [3.2.3] - Unreleased
+
 ## [3.2.2] - 2026-05-22
 
 ### Added
