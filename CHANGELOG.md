@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.2.3] - Unreleased
+## [3.2.3] - 2026-05-24
 
 ### Added
 - `peekaboo image --json` now reports capture coordinate diagnostics and warns when window captures look blank or solid.
