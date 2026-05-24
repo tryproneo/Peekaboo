@@ -449,7 +449,11 @@ ZIP_LENGTH="$(stat -f%z "$ZIP_PATH")"
 ZIP_SHA256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
 
 log "Signing Sparkle update"
-SIGN_OUTPUT="$(sign_update "${SPARKLE_KEY_ARGS[@]}" "$ZIP_PATH" 2>&1)"
+if ((${#SPARKLE_KEY_ARGS[@]})); then
+  SIGN_OUTPUT="$(sign_update "${SPARKLE_KEY_ARGS[@]}" "$ZIP_PATH" 2>&1)"
+else
+  SIGN_OUTPUT="$(sign_update "$ZIP_PATH" 2>&1)"
+fi
 printf '%s\n' "$SIGN_OUTPUT"
 ED_SIGNATURE="$(printf '%s\n' "$SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' | tail -1)"
 [[ -n "$ED_SIGNATURE" ]] || fail "Could not parse sparkle:edSignature from sign_update output"
