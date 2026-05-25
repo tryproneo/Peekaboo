@@ -8,31 +8,14 @@ metadata: {"clawdbot":{"emoji":"👁️","requires":{"bins":["pnpm","op","tmux",
 
 Release `~/Projects/Peekaboo` as the npm package `@steipete/peekaboo` plus signed/notarized macOS app assets.
 
-Use `$one-password`, `$browser-use`, `$npm`, `$autoreview`, and repo `AGENTS.md` rules. Read `$npm` before any npm auth, token, or publish recovery work. Keep all `op` secret work inside one persistent tmux session. Never print `.p8`, npm tokens, passwords, or OTPs.
+Use `$one-password`, `$browser-use`, `$npm`, `$autoreview`, and repo `AGENTS.md` rules. Load `$release-private` if it exists before resolving Peter-owned credential locators. Read `$npm` before any npm auth, token, or publish recovery work. Keep all `op` secret work inside one persistent tmux session. Never print `.p8`, npm tokens, passwords, or OTPs.
 
 ## Current Secrets
 
-Canonical automation item:
-
-- vault: `Molty`
-- title: `API Key - App Store Connect - Personal - Release`
-- fields: `key_id`, `issuer_id`, `private_key_p8`
-- service token: `MOLTY_OP_SERVICE_ACCOUNT_TOKEN`
-- status: if the service account returns `Service Account Deleted`, use desktop `op --account my.1password.com` and restore the Molty service account before the next release.
-- current key id: `AKVLXW849T`
-- issuer id: `69a6de84-c8a9-47e3-e053-5b8c7c11a4d1`
-- App Store Connect key name: `Peekaboo Release 3.2.1`
-- access: `Admin`
-
-Legacy mirror:
-
-- vault: `Private`
-- title: `API Key - App Store Connect - Personal`
-- Keep synced to the same current key so older refs do not use stale material.
-
-Revoked old key:
-
-- `Peekaboo Release 3.2.0` / `7HRXH68LLU`, revoked 2026-05-18.
+- Peter-owned credential item names, key ids, issuer ids, keychain paths, and npm token locators live in `$release-private`.
+- Required ASC fields: `key_id`, `issuer_id`, `private_key_p8`.
+- Stale/revoked key symptom: `xcrun notarytool submit` fails with `HTTP status code: 401. Unauthenticated`.
+- All ASC fields must come from the same current item; do not mix profile values with 1Password refs.
 
 Sparkle key:
 
@@ -41,36 +24,32 @@ Sparkle key:
 
 Developer ID release keychain:
 
-- vault: `Molty`
-- title: `Peekaboo Release Keychain`
-- fields: `keychain_path`, `keychain_password`, `certificate_source`
-- current path: `/Users/steipete/Library/Keychains/peekaboo-release-321-20260518132141.keychain-db`
-- If macOS shows `codesign wants to use the "peekaboo-release" keychain`, enter this item's `keychain_password`, not the Developer ID `.p12` password.
+- Resolve the release keychain item/path from `$release-private`.
+- If macOS shows `codesign wants to use the release keychain`, enter the keychain item password, not the Developer ID `.p12` password.
 - The Developer ID certificate password is only for importing the `.p12` while creating the keychain.
 - After setup/import, run `security unlock-keychain` and `security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"` so `codesign` can use the identity without GUI prompts.
 
 npm publish token:
 
-- vault: `Private`
-- title: `API Token - npm - Personal`
-- field: `token`
+- Resolve token/TOTP locators from `$release-private`.
 - Use `$npm` rules. Run inside the same tmux session, write only a temp npmrc, delete it immediately, and use the `npmjs` TOTP item for web auth if npm prompts.
 - Do not create short-lived/granular bypass tokens for a normal Peekaboo publish. They add cleanup risk and did not help the 3.2.1 slow-upload/web-auth path.
 
 ## Notary Credential Check
 
-Use the service account first. Put the token in the tmux environment without printing it:
+Use the service account from `$release-private` first. Put the token in the tmux environment without printing it:
 
 ```bash
-tmux -S "$SOCKET" set-environment -t "$SESSION" OP_SERVICE_ACCOUNT_TOKEN "$MOLTY_OP_SERVICE_ACCOUNT_TOKEN"
+# Resolve SERVICE_ACCOUNT_TOKEN from $release-private first.
+tmux -S "$SOCKET" set-environment -t "$SESSION" OP_SERVICE_ACCOUNT_TOKEN "$SERVICE_ACCOUNT_TOKEN"
 ```
 
-Create a temp env file with service-account refs:
+Create a temp env file with service-account refs from `$release-private`:
 
 ```text
-APP_STORE_CONNECT_API_KEY_P8=op://Molty/API Key - App Store Connect - Personal - Release/private_key_p8
-APP_STORE_CONNECT_KEY_ID=op://Molty/API Key - App Store Connect - Personal - Release/key_id
-APP_STORE_CONNECT_ISSUER_ID=op://Molty/API Key - App Store Connect - Personal - Release/issuer_id
+APP_STORE_CONNECT_API_KEY_P8=<1Password ref from release-private>
+APP_STORE_CONNECT_KEY_ID=<1Password ref from release-private>
+APP_STORE_CONNECT_ISSUER_ID=<1Password ref from release-private>
 ```
 
 Before a release, verify shape and Apple auth without printing values:
@@ -81,7 +60,6 @@ op run --env-file "$ENVFILE" -- bash -c '
   KEY_FILE="/tmp/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
   printf "%s\n" "$APP_STORE_CONNECT_API_KEY_P8" > "$KEY_FILE"
   chmod 600 "$KEY_FILE"
-  test "$APP_STORE_CONNECT_KEY_ID" = "AKVLXW849T"
   xcrun notarytool history \
     --key "$KEY_FILE" \
     --key-id "$APP_STORE_CONNECT_KEY_ID" \
@@ -99,7 +77,7 @@ If both `history` and non-S3 `submit` fail, suspect wrong access level or stale 
 2. Open `https://appstoreconnect.apple.com/access/integrations/api`.
 3. Generate Team Key named `Peekaboo Release <version>` with `Admin` access.
 4. Download `.p8` once from the key row.
-5. Store immediately into both 1Password items above; verify `notarytool history`; delete `~/Downloads/AuthKey_<key_id>.p8`.
+5. Store immediately into the private credential map; verify `notarytool history`; delete `~/Downloads/AuthKey_<key_id>.p8`.
 6. Revoke the older Peekaboo release key after the new key validates.
 
 ## Release Flow
@@ -128,7 +106,7 @@ The script builds universal CLI, npm package, signed/notarized app zip, appcast,
 
 Notarized releases must sign with `Developer ID Application: Peter Steinberger (Y5PE65HELJ)`, not `Apple Development`. If your shell has `SIGN_IDENTITY` exported for CLI builds, override it for the release command.
 
-If npm upload is slow and TOTP expires, use the stored npm token through a temp npmrc and complete npm web auth immediately when prompted with the `npmjs` TOTP. Do not create granular bypass tokens for this; if one was created by mistake, delete it from `https://www.npmjs.com/settings/steipete/tokens` before closeout.
+If npm upload is slow and TOTP expires, use the stored npm token through a temp npmrc and complete npm web auth immediately when prompted with the configured TOTP. Do not create granular bypass tokens for this; if one was created by mistake, delete it before closeout.
 
 ## Verify
 
