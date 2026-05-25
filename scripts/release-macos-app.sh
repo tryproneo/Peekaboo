@@ -17,10 +17,10 @@ fi
 MAC_RELEASE_HELPER_LOADED=false
 for candidate in \
   "${MAC_RELEASE_LIB:-}" \
-  "$ROOT_DIR/../agent-scripts/skills/mac-app-release/scripts/lib/mac_release.sh" \
-  "$HOME/Projects/agent-scripts/skills/mac-app-release/scripts/lib/mac_release.sh"; do
+  "$ROOT_DIR/../agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh" \
+  "$HOME/Projects/agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh"; do
   if [[ -n "$candidate" && -f "$candidate" ]]; then
-    # shellcheck source=/Users/steipete/Projects/agent-scripts/skills/mac-app-release/scripts/lib/mac_release.sh
+    # shellcheck source=/Users/steipete/Projects/agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh
     source "$candidate"
     MAC_RELEASE_HELPER_LOADED=true
     break
