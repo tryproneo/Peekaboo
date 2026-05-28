@@ -183,7 +183,7 @@ struct VisualizerSettingsView: View {
             Section("Watch Capture") {
                 AnimationToggleRow(
                     title: "Watch Capture HUD",
-                    subtitle: "Pulse indicator for `peekaboo watch` sessions",
+                    subtitle: "Pulse indicator for `peekaboo capture live` sessions",
                     icon: "applewatch.watchface",
                     isOn: self.$settings.watchCaptureHUDEnabled,
                     isEnabled: self.settings.visualizerEnabled,
