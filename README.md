@@ -1,5 +1,3 @@
-![Peekaboo banner](docs/assets/readme-banner.jpg)
-
 # Peekaboo 🫣 - Mac automation that sees the screen and does the clicks.
 
 ![Peekaboo Banner](assets/peekaboo.png)
