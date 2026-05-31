@@ -95,10 +95,18 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             for repetition in 0..<self.count {
                 for (index, key) in normalizedKeys.indexed() {
                     if let targetPID {
-                        try await AutomationServiceBridge.hotkey(
+                        guard let specialKey = SpecialKey(rawValue: key) else {
+                            throw ValidationError(
+                                "Unknown key: '\(key)'. Run 'peekaboo press --help' for available keys."
+                            )
+                        }
+                        _ = try await AutomationServiceBridge.typeActions(
                             automation: self.services.automation,
-                            keys: key,
-                            holdDuration: self.hold,
+                            request: TypeActionsRequest(
+                                actions: [.key(specialKey)],
+                                cadence: .fixed(milliseconds: 0),
+                                snapshotId: observation.snapshotId
+                            ),
                             targetProcessIdentifier: targetPID
                         )
                     } else {

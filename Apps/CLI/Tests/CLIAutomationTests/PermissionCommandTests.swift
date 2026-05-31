@@ -121,6 +121,7 @@ private struct PermissionRequestResultForTest: Codable {
     let granted: Bool?
 }
 
+#if !PEEKABOO_SKIP_AUTOMATION
 extension PermissionCommandTests {
     fileprivate static func balancedJSON(in text: Substring) -> String? {
         var curly = 0
@@ -144,3 +145,4 @@ extension PermissionCommandTests {
         return String(text.prefix(upTo: end))
     }
 }
+#endif

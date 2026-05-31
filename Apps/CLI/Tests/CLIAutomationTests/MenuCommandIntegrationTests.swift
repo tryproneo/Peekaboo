@@ -194,6 +194,7 @@ struct MenuCommandIntegrationTests {
 
 // MARK: - JSON Helpers
 
+#if !PEEKABOO_SKIP_AUTOMATION
 extension MenuCommandIntegrationTests {
     private enum JSONDecodeError: Error {
         case emptyOutput
@@ -349,3 +350,4 @@ extension MenuCommandIntegrationTests {
         )
     }
 }
+#endif

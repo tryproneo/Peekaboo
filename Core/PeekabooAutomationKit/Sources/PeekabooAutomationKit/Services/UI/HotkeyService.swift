@@ -20,9 +20,7 @@ public final class HotkeyService {
         inputPolicy: UIInputPolicy = .currentBehavior,
         postEventAccessEvaluator: @escaping @MainActor @Sendable ()
             -> Bool = { CGPreflightPostEventAccess() },
-        eventPoster: @escaping @MainActor @Sendable (CGEvent, pid_t) -> Void = { event, pid in
-            event.postToPid(pid)
-        },
+        eventPoster: (@MainActor @Sendable (CGEvent, pid_t) -> Void)? = nil,
         runningApplicationResolver: @escaping @MainActor @Sendable (pid_t) -> NSRunningApplication? = {
             NSRunningApplication(processIdentifier: $0)
         })
@@ -31,7 +29,7 @@ public final class HotkeyService {
             inputPolicy: inputPolicy,
             actionInputDriver: ActionInputDriver(),
             postEventAccessEvaluator: postEventAccessEvaluator,
-            eventPoster: eventPoster,
+            eventPoster: eventPoster ?? Self.defaultTargetedEventPoster,
             runningApplicationResolver: runningApplicationResolver)
     }
 
@@ -40,9 +38,7 @@ public final class HotkeyService {
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         postEventAccessEvaluator: @escaping @MainActor @Sendable ()
             -> Bool = { CGPreflightPostEventAccess() },
-        eventPoster: @escaping @MainActor @Sendable (CGEvent, pid_t) -> Void = { event, pid in
-            event.postToPid(pid)
-        },
+        eventPoster: @escaping @MainActor @Sendable (CGEvent, pid_t) -> Void = HotkeyService.defaultTargetedEventPoster,
         runningApplicationResolver: @escaping @MainActor @Sendable (pid_t) -> NSRunningApplication? = {
             NSRunningApplication(processIdentifier: $0)
         })
@@ -52,6 +48,10 @@ public final class HotkeyService {
         self.postEventAccessEvaluator = postEventAccessEvaluator
         self.eventPoster = eventPoster
         self.runningApplicationResolver = runningApplicationResolver
+    }
+
+    private static func defaultTargetedEventPoster(_ event: CGEvent, _ pid: pid_t) {
+        BackgroundInputDriver.postEvent(event, to: pid)
     }
 
     /// Press a hotkey combination.
@@ -162,22 +162,24 @@ public final class HotkeyService {
             throw PeekabooError.permissionDeniedEventSynthesizing
         }
 
-        let source = CGEventSource(stateID: .hidSystemState)
-        guard
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: plan.keyCode, keyDown: true),
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: plan.keyCode, keyDown: false)
-        else {
-            throw PeekabooError.operationError(message: "Failed to create keyboard events")
+        let eventPlan = try BackgroundInputDriver.keyboardEventPlan(
+            keyCode: plan.keyCode,
+            flags: plan.modifierFlags,
+            targetProcessIdentifier: targetProcessIdentifier)
+
+        for event in eventPlan.modifierKeyDownEvents {
+            self.eventPoster(event, targetProcessIdentifier)
+            usleep(1000)
         }
 
-        keyDown.flags = plan.modifierFlags
-        keyUp.flags = plan.modifierFlags
-
-        self.eventPoster(keyDown, targetProcessIdentifier)
-        var keyUpPosted = false
+        self.eventPoster(eventPlan.primaryKeyDownEvent, targetProcessIdentifier)
+        var released = false
         defer {
-            if !keyUpPosted {
-                self.eventPoster(keyUp, targetProcessIdentifier)
+            if !released {
+                self.eventPoster(eventPlan.primaryKeyUpEvent, targetProcessIdentifier)
+                for event in eventPlan.modifierKeyUpEvents {
+                    self.eventPoster(event, targetProcessIdentifier)
+                }
             }
         }
 
@@ -185,8 +187,12 @@ public final class HotkeyService {
             try await Task.sleep(nanoseconds: holdNanoseconds)
         }
 
-        self.eventPoster(keyUp, targetProcessIdentifier)
-        keyUpPosted = true
+        self.eventPoster(eventPlan.primaryKeyUpEvent, targetProcessIdentifier)
+        for event in eventPlan.modifierKeyUpEvents {
+            usleep(1000)
+            self.eventPoster(event, targetProcessIdentifier)
+        }
+        released = true
     }
 
     private static func holdNanoseconds(for holdDuration: Int) throws -> UInt64 {

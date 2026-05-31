@@ -322,6 +322,14 @@ public final class TypeService {
         self.logger.debug("Clearing current field")
 
         if let targetProcessIdentifier {
+            if try BackgroundInputDriver.replaceFocusedText(
+                with: "",
+                targetProcessIdentifier: targetProcessIdentifier)
+            {
+                try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                return
+            }
+
             try BackgroundInputDriver.tapKey(
                 keyCode: 0x00,
                 modifiers: .maskCommand,
@@ -353,6 +361,12 @@ public final class TypeService {
 
     private func typeCharacter(_ char: Character, targetProcessIdentifier: pid_t? = nil) async throws {
         if let targetProcessIdentifier {
+            if try BackgroundInputDriver.insertTextIntoFocusedText(
+                String(char),
+                targetProcessIdentifier: targetProcessIdentifier)
+            {
+                return
+            }
             try BackgroundInputDriver.typeCharacter(char, targetProcessIdentifier: targetProcessIdentifier)
         } else {
             try self.syntheticInputDriver.type(String(char), delayPerCharacter: 0)

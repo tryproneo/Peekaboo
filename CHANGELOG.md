@@ -9,6 +9,7 @@
 - `peekaboo click`, `type`, `hotkey`, `press`, and `paste` now use background process-targeted delivery by default when a target PID/app/window/snapshot process can be resolved, with `--foreground` for focused foreground input.
 
 ### Fixed
+- Background text input now prefers AX text editing for typing, paste, clear, and focused-field key presses so targeted apps stay in the background more reliably.
 - Visualizer settings and capture-engine docs now reference `peekaboo capture live` instead of stale top-level `peekaboo watch`/`peekaboo capture` command forms. Thanks @coygeek for #166 and #167.
 
 ## [3.2.3] - 2026-05-24

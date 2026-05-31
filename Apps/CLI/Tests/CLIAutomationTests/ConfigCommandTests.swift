@@ -52,13 +52,15 @@ struct ConfigCommandTests {
 
         // Check subcommands
         let subcommands = command.commandDescription.subcommands
-        #expect(subcommands.count == 12)
+        #expect(subcommands.count == 13)
         let hasInit = subcommands.contains { $0 == ConfigCommand.InitCommand.self }
         #expect(hasInit)
         let hasAdd = subcommands.contains { $0 == ConfigCommand.AddCommand.self }
         #expect(hasAdd)
         let hasShow = subcommands.contains { $0 == ConfigCommand.ShowCommand.self }
         #expect(hasShow)
+        let hasStatus = subcommands.contains { $0 == ConfigCommand.StatusCommand.self }
+        #expect(hasStatus)
         let hasEdit = subcommands.contains { $0 == ConfigCommand.EditCommand.self }
         #expect(hasEdit)
         let hasValidate = subcommands.contains { $0 == ConfigCommand.ValidateCommand.self }

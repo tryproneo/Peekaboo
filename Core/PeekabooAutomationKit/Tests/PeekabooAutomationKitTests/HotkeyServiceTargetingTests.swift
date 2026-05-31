@@ -81,6 +81,53 @@ struct HotkeyServiceTargetingTests {
         #expect(delPlan.keyCode == 0x33)
     }
 
+    @Test func `background text insertion replaces selected UTF16 range`() {
+        let edit = BackgroundInputDriver.textByReplacingSelection(
+            in: "prefix suffix",
+            selection: CFRange(location: 7, length: 6),
+            replacement: "value")
+
+        #expect(edit.text == "prefix value")
+        #expect(edit.cursorLocation == 12)
+    }
+
+    @Test func `background text insertion handles emoji UTF16 offsets`() {
+        let edit = BackgroundInputDriver.textByReplacingSelection(
+            in: "a😀c",
+            selection: CFRange(location: 1, length: 2),
+            replacement: "b")
+
+        #expect(edit.text == "abc")
+        #expect(edit.cursorLocation == 2)
+    }
+
+    @Test func `background text insertion appends when selection is unavailable`() {
+        let edit = BackgroundInputDriver.textByReplacingSelection(
+            in: "base",
+            selection: nil,
+            replacement: " tail")
+
+        #expect(edit.text == "base tail")
+        #expect(edit.cursorLocation == 9)
+    }
+
+    @Test func `background text cursor movement respects UTF16 character boundaries`() {
+        let text = "a😀c"
+
+        #expect(BackgroundInputDriver.cursorLocationMovingLeft(
+            from: CFRange(location: 3, length: 0),
+            in: text) == 1)
+        #expect(BackgroundInputDriver.cursorLocationMovingRight(
+            from: CFRange(location: 1, length: 0),
+            in: text) == 3)
+        #expect(BackgroundInputDriver.cursorLocationMovingLeft(
+            from: CFRange(location: 1, length: 2),
+            in: text) == 1)
+        #expect(BackgroundInputDriver.cursorLocationMovingRight(
+            from: CFRange(location: 1, length: 2),
+            in: text) == 3)
+    }
+
     @Test func `foreground hotkey parser trims and normalizes aliases before AXorcist delivery`() throws {
         let service = HotkeyService()
 
@@ -112,23 +159,37 @@ struct HotkeyServiceTargetingTests {
     }
 
     @Test func `targeted hotkey posts key down and key up to target process`() async throws {
-        var postedEvents: [(type: CGEventType, keyCode: Int64, flags: CGEventFlags, pid: pid_t)] = []
+        var postedEvents: [PostedKeyboardEvent] = []
         let service = HotkeyService(
             postEventAccessEvaluator: { true },
             eventPoster: { event, pid in
-                postedEvents.append((
+                postedEvents.append(PostedKeyboardEvent(
                     type: event.type,
                     keyCode: event.getIntegerValueField(.keyboardEventKeycode),
                     flags: event.flags,
+                    targetPID: event.getIntegerValueField(.eventTargetUnixProcessID),
                     pid: pid))
             })
 
         try await service.hotkey(keys: "cmd,shift,l", holdDuration: 0, targetProcessIdentifier: getpid())
 
-        #expect(postedEvents.count == 2)
-        #expect(postedEvents.map(\.type) == [.keyDown, .keyUp])
-        #expect(postedEvents.map(\.keyCode) == [0x25, 0x25])
-        #expect(postedEvents.allSatisfy { $0.flags.contains(.maskCommand) && $0.flags.contains(.maskShift) })
+        #expect(postedEvents.count == 6)
+        #expect(postedEvents.map(\.type) == [
+            .flagsChanged,
+            .flagsChanged,
+            .keyDown,
+            .keyUp,
+            .flagsChanged,
+            .flagsChanged,
+        ])
+        #expect(postedEvents.map(\.keyCode) == [0x37, 0x38, 0x25, 0x25, 0x38, 0x37])
+        #expect(postedEvents[0].flags.contains(.maskCommand))
+        #expect(postedEvents[1].flags.contains(.maskCommand) && postedEvents[1].flags.contains(.maskShift))
+        #expect(postedEvents[2].flags.contains(.maskCommand) && postedEvents[2].flags.contains(.maskShift))
+        #expect(postedEvents[3].flags.contains(.maskCommand) && postedEvents[3].flags.contains(.maskShift))
+        #expect(postedEvents[4].flags.contains(.maskCommand) && !postedEvents[4].flags.contains(.maskShift))
+        #expect(!postedEvents[5].flags.contains(.maskCommand) && !postedEvents[5].flags.contains(.maskShift))
+        #expect(postedEvents.allSatisfy { $0.targetPID == Int64(getpid()) })
         #expect(postedEvents.allSatisfy { $0.pid == getpid() })
     }
 
@@ -138,13 +199,15 @@ struct HotkeyServiceTargetingTests {
     }
 
     @Test func `action first targeted hotkey uses action driver when menu shortcut resolves`() async throws {
-        var postedEvents: [CGEventType] = []
+        var postedEvents: [(type: CGEventType, keyCode: Int64)] = []
         let driver = RecordingHotkeyActionDriver(result: ActionInputResult(actionName: "AXPress"))
         let service = HotkeyService(
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: driver,
             postEventAccessEvaluator: { true },
-            eventPoster: { event, _ in postedEvents.append(event.type) },
+            eventPoster: { event, _ in
+                postedEvents.append((event.type, event.getIntegerValueField(.keyboardEventKeycode)))
+            },
             runningApplicationResolver: { _ in NSRunningApplication.current })
 
         try await service.hotkey(keys: "cmd,s", holdDuration: 0, targetProcessIdentifier: getpid())
@@ -154,20 +217,31 @@ struct HotkeyServiceTargetingTests {
     }
 
     @Test func `action first targeted hotkey falls back to synth when menu shortcut is unavailable`() async throws {
-        var postedEvents: [CGEventType] = []
+        var postedEvents: [(type: CGEventType, keyCode: Int64)] = []
         let driver = RecordingHotkeyActionDriver(error: .unsupported(.menuShortcutUnavailable))
         let service = HotkeyService(
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: driver,
             postEventAccessEvaluator: { true },
-            eventPoster: { event, _ in postedEvents.append(event.type) },
+            eventPoster: { event, _ in
+                postedEvents.append((event.type, event.getIntegerValueField(.keyboardEventKeycode)))
+            },
             runningApplicationResolver: { _ in NSRunningApplication.current })
 
         try await service.hotkey(keys: "cmd,s", holdDuration: 0, targetProcessIdentifier: getpid())
 
         #expect(driver.hotkeyCalls == [["cmd", "s"]])
-        #expect(postedEvents == [.keyDown, .keyUp])
+        #expect(postedEvents.map(\.type) == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        #expect(postedEvents.map(\.keyCode) == [0x37, 0x01, 0x01, 0x37])
     }
+}
+
+private struct PostedKeyboardEvent {
+    let type: CGEventType
+    let keyCode: Int64
+    let flags: CGEventFlags
+    let targetPID: Int64
+    let pid: pid_t
 }
 
 @MainActor

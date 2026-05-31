@@ -117,19 +117,36 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
             let setResult = try self.services.clipboard.set(request)
 
-            if let targetPID {
-                try await AutomationServiceBridge.hotkey(
+            var usedTargetedTyping = false
+            if let targetPID,
+               let text = self.resolvedText {
+                _ = try await AutomationServiceBridge.typeActions(
                     automation: self.services.automation,
-                    keys: "cmd,v",
-                    holdDuration: 50,
+                    request: TypeActionsRequest(
+                        actions: [.text(text)],
+                        cadence: .fixed(milliseconds: 0),
+                        snapshotId: nil
+                    ),
                     targetProcessIdentifier: targetPID
                 )
-            } else {
-                try await AutomationServiceBridge.hotkey(
-                    automation: self.services.automation,
-                    keys: "cmd,v",
-                    holdDuration: 50
-                )
+                usedTargetedTyping = true
+            }
+
+            if !usedTargetedTyping {
+                if let targetPID {
+                    try await AutomationServiceBridge.hotkey(
+                        automation: self.services.automation,
+                        keys: "cmd,v",
+                        holdDuration: 50,
+                        targetProcessIdentifier: targetPID
+                    )
+                } else {
+                    try await AutomationServiceBridge.hotkey(
+                        automation: self.services.automation,
+                        keys: "cmd,v",
+                        holdDuration: 50
+                    )
+                }
             }
             await InteractionObservationInvalidator.invalidateLatestSnapshot(
                 using: self.services.snapshots,
@@ -152,7 +169,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             )
 
             self.output(result) {
-                print("✅ Pasted (Cmd+V) and restored clipboard")
+                print("✅ Pasted and restored clipboard")
                 print("📋 Pasted: \(setResult.utiIdentifier) (\(setResult.data.count) bytes)")
                 if priorClipboard != nil {
                     print("♻️  Restored: \(restoreResult?.utiIdentifier ?? "unknown")")
@@ -245,11 +262,11 @@ extension PasteCommand: ParsableCommand {
                 discussion: """
                     This command reduces drift in automation flows by collapsing:
                       1) clipboard set
-                      2) Cmd+V paste
+                      2) paste delivery
                       3) clipboard restore
                     into one operation.
-                    Background Cmd+V delivery is used by default when a target process
-                    is known; add --foreground for focused/global paste.
+                    Background text delivery is used by default when a target process is known;
+                    binary payloads use background Cmd+V. Add --foreground for focused/global paste.
 
                     EXAMPLES:
                       peekaboo paste \"Hello\" --app TextEdit

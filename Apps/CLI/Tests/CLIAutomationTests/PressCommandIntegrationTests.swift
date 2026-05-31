@@ -135,9 +135,15 @@ struct PressCommandIntegrationTests {
         )
 
         #expect(result.exitStatus == 0)
-        let targetedCalls = await self.automationState(context) { $0.targetedHotkeyCalls }
-        #expect(targetedCalls.map(\.keys) == ["return"])
-        #expect(targetedCalls.first?.targetProcessIdentifier == 2468)
+        let targetedCalls = await self.automationState(context) { $0.targetedTypeActionsCalls }
+        let targetedCall = try #require(targetedCalls.first)
+        #expect(targetedCall.targetProcessIdentifier == 2468)
+        #expect(targetedCall.actions.count == 1)
+        if case .key(.return) = targetedCall.actions[0] {} else {
+            Issue.record("Expected background press to use targeted type action")
+        }
+        let targetedHotkeys = await self.automationState(context) { $0.targetedHotkeyCalls }
+        #expect(targetedHotkeys.isEmpty)
         let foregroundCalls = await self.automationState(context) { $0.hotkeyCalls }
         #expect(foregroundCalls.isEmpty)
         let payload = try ExternalCommandRunner.decodeJSONResponse(

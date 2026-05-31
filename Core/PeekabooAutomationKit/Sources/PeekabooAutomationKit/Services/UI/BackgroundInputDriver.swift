@@ -1,3 +1,4 @@
+import ApplicationServices
 @preconcurrency import AXorcist
 import CoreGraphics
 import Darwin
@@ -10,6 +11,13 @@ import PeekabooFoundation
 /// macOS delivers pid-routed CGEvents differently from hardware events, and
 /// some apps ignore background mouse events unless they also expose an AX path.
 enum BackgroundInputDriver {
+    struct KeyboardEventPlan {
+        let modifierKeyDownEvents: [CGEvent]
+        let primaryKeyDownEvent: CGEvent
+        let primaryKeyUpEvent: CGEvent
+        let modifierKeyUpEvents: [CGEvent]
+    }
+
     static func click(
         at point: CGPoint,
         button: MouseButton,
@@ -96,6 +104,110 @@ enum BackgroundInputDriver {
             targetProcessIdentifier: targetProcessIdentifier)
     }
 
+    static func postEvent(_ event: CGEvent, to pid: pid_t) {
+        self.post(event, to: pid)
+    }
+
+    @discardableResult
+    static func replaceFocusedText(
+        with text: String,
+        targetProcessIdentifier: pid_t) throws -> Bool
+    {
+        try self.validateLiveTarget(targetProcessIdentifier)
+        guard let element = try self.focusedEditableTextElement(targetProcessIdentifier: targetProcessIdentifier) else {
+            return false
+        }
+        guard try self.setText(text, on: element) else {
+            return false
+        }
+        self.setSelectedTextRange(CFRange(location: text.utf16.count, length: 0), on: element)
+        return true
+    }
+
+    @discardableResult
+    static func insertTextIntoFocusedText(
+        _ text: String,
+        targetProcessIdentifier: pid_t) throws -> Bool
+    {
+        try self.validateLiveTarget(targetProcessIdentifier)
+        guard let element = try self.focusedEditableTextElement(targetProcessIdentifier: targetProcessIdentifier),
+              let currentText = try self.textValue(from: element)
+        else {
+            return false
+        }
+
+        let selectedRange = self.selectedTextRange(from: element)
+        let edit = self.textByReplacingSelection(in: currentText, selection: selectedRange, replacement: text)
+        guard try self.setText(edit.text, on: element) else {
+            return false
+        }
+        self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+        return true
+    }
+
+    @discardableResult
+    static func performFocusedTextKey(
+        _ key: PeekabooFoundation.SpecialKey,
+        targetProcessIdentifier: pid_t) throws -> Bool
+    {
+        try self.validateLiveTarget(targetProcessIdentifier)
+        guard let element = try self.focusedEditableTextElement(targetProcessIdentifier: targetProcessIdentifier),
+              let currentText = try self.textValue(from: element)
+        else {
+            return false
+        }
+
+        let textLength = currentText.utf16.count
+        let selection = self.clampedSelection(self.selectedTextRange(from: element), textLength: textLength)
+
+        switch key {
+        case .leftArrow:
+            let location = self.cursorLocationMovingLeft(from: selection, in: currentText)
+            self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
+            return true
+
+        case .rightArrow:
+            let location = self.cursorLocationMovingRight(from: selection, in: currentText)
+            self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
+            return true
+
+        case .home:
+            self.setSelectedTextRange(CFRange(location: 0, length: 0), on: element)
+            return true
+
+        case .end:
+            self.setSelectedTextRange(CFRange(location: textLength, length: 0), on: element)
+            return true
+
+        case .delete:
+            guard let editRange = self.deletionRangeBeforeSelection(selection, in: currentText) else {
+                return true
+            }
+            let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
+            guard try self.setText(edit.text, on: element) else { return false }
+            self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+            return true
+
+        case .forwardDelete:
+            guard let editRange = self.deletionRangeAfterSelection(selection, in: currentText) else {
+                return true
+            }
+            let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
+            guard try self.setText(edit.text, on: element) else { return false }
+            self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+            return true
+
+        case .space:
+            let edit = self.textByReplacingSelection(in: currentText, selection: selection, replacement: " ")
+            guard try self.setText(edit.text, on: element) else { return false }
+            self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+            return true
+
+        default:
+            return false
+        }
+    }
+
     private static func post(_ event: CGEvent, to pid: pid_t) {
         if !SkyLightPerPidEventPost.post(event, to: pid) {
             event.postToPid(pid)
@@ -107,6 +219,10 @@ enum BackgroundInputDriver {
             throw PeekabooError.permissionDeniedEventSynthesizing
         }
 
+        try self.validateLiveTarget(targetProcessIdentifier)
+    }
+
+    private static func validateLiveTarget(_ targetProcessIdentifier: pid_t) throws {
         guard targetProcessIdentifier > 0, self.isProcessAlive(targetProcessIdentifier) else {
             throw PeekabooError.invalidInput("Target process identifier is not running: \(targetProcessIdentifier)")
         }
@@ -116,21 +232,111 @@ enum BackgroundInputDriver {
         _ stroke: (keyCode: CGKeyCode, flags: CGEventFlags),
         targetProcessIdentifier: pid_t) throws
     {
+        let plan = try self.keyboardEventPlan(
+            keyCode: stroke.keyCode,
+            flags: stroke.flags,
+            targetProcessIdentifier: targetProcessIdentifier)
+
+        for event in plan.modifierKeyDownEvents {
+            self.post(event, to: targetProcessIdentifier)
+            usleep(1000)
+        }
+
+        self.post(plan.primaryKeyDownEvent, to: targetProcessIdentifier)
+        usleep(1000)
+        self.post(plan.primaryKeyUpEvent, to: targetProcessIdentifier)
+
+        for event in plan.modifierKeyUpEvents {
+            usleep(1000)
+            self.post(event, to: targetProcessIdentifier)
+        }
+    }
+
+    static func keyboardEventPlan(
+        keyCode: CGKeyCode,
+        flags: CGEventFlags,
+        targetProcessIdentifier: pid_t) throws -> KeyboardEventPlan
+    {
         let source = CGEventSource(stateID: .hidSystemState)
-        guard
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: stroke.keyCode, keyDown: true),
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: stroke.keyCode, keyDown: false)
-        else {
+        let modifiers = self.modifierKeys(for: flags)
+        var activeFlags: CGEventFlags = []
+
+        let modifierDownEvents = try modifiers.map { modifier in
+            activeFlags.insert(modifier.flag)
+            return try self.makeKeyboardEvent(
+                keyCode: modifier.keyCode,
+                keyDown: true,
+                flags: activeFlags,
+                source: source,
+                targetProcessIdentifier: targetProcessIdentifier)
+        }
+
+        let primaryKeyDownEvent = try self.makeKeyboardEvent(
+            keyCode: keyCode,
+            keyDown: true,
+            flags: flags,
+            source: source,
+            targetProcessIdentifier: targetProcessIdentifier)
+        let primaryKeyUpEvent = try self.makeKeyboardEvent(
+            keyCode: keyCode,
+            keyDown: false,
+            flags: flags,
+            source: source,
+            targetProcessIdentifier: targetProcessIdentifier)
+
+        let modifierUpEvents = try modifiers.reversed().map { modifier in
+            activeFlags.remove(modifier.flag)
+            return try self.makeKeyboardEvent(
+                keyCode: modifier.keyCode,
+                keyDown: false,
+                flags: activeFlags,
+                source: source,
+                targetProcessIdentifier: targetProcessIdentifier)
+        }
+
+        return KeyboardEventPlan(
+            modifierKeyDownEvents: modifierDownEvents,
+            primaryKeyDownEvent: primaryKeyDownEvent,
+            primaryKeyUpEvent: primaryKeyUpEvent,
+            modifierKeyUpEvents: modifierUpEvents)
+    }
+
+    private static func makeKeyboardEvent(
+        keyCode: CGKeyCode,
+        keyDown: Bool,
+        flags: CGEventFlags,
+        source: CGEventSource?,
+        targetProcessIdentifier: pid_t) throws -> CGEvent
+    {
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown) else {
             throw PeekabooError.operationError(message: "Failed to create background keyboard events")
         }
 
-        keyDown.flags = stroke.flags
-        keyUp.flags = stroke.flags
-        self.stampKeyboardRoutingFields(on: keyDown, targetProcessIdentifier: targetProcessIdentifier)
-        self.stampKeyboardRoutingFields(on: keyUp, targetProcessIdentifier: targetProcessIdentifier)
-        self.post(keyDown, to: targetProcessIdentifier)
-        usleep(1000)
-        self.post(keyUp, to: targetProcessIdentifier)
+        event.flags = flags
+        self.stampKeyboardRoutingFields(on: event, targetProcessIdentifier: targetProcessIdentifier)
+        return event
+    }
+
+    private static func modifierKeys(for flags: CGEventFlags) -> [(keyCode: CGKeyCode, flag: CGEventFlags)] {
+        var modifiers: [(keyCode: CGKeyCode, flag: CGEventFlags)] = []
+
+        if flags.contains(.maskCommand) {
+            modifiers.append((keyCode: 0x37, flag: .maskCommand))
+        }
+        if flags.contains(.maskShift) {
+            modifiers.append((keyCode: 0x38, flag: .maskShift))
+        }
+        if flags.contains(.maskAlternate) {
+            modifiers.append((keyCode: 0x3A, flag: .maskAlternate))
+        }
+        if flags.contains(.maskControl) {
+            modifiers.append((keyCode: 0x3B, flag: .maskControl))
+        }
+        if flags.contains(.maskSecondaryFn) {
+            modifiers.append((keyCode: 0x3F, flag: .maskSecondaryFn))
+        }
+
+        return modifiers
     }
 
     private static func postUnicodeCharacter(_ character: Character, targetProcessIdentifier: pid_t) throws {
@@ -202,8 +408,234 @@ enum BackgroundInputDriver {
         event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: value)
     }
 
-    private static func stampKeyboardRoutingFields(on event: CGEvent, targetProcessIdentifier: pid_t) {
+    static func stampKeyboardRoutingFields(on event: CGEvent, targetProcessIdentifier: pid_t) {
         event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(targetProcessIdentifier))
+    }
+
+    static func textByReplacingSelection(
+        in currentText: String,
+        selection: CFRange?,
+        replacement: String) -> (text: String, cursorLocation: Int)
+    {
+        guard let selection,
+              selection.location >= 0,
+              selection.length >= 0
+        else {
+            return (currentText + replacement, currentText.utf16.count + replacement.utf16.count)
+        }
+
+        let utf16 = currentText.utf16
+        guard let startUTF16 = utf16.index(
+            utf16.startIndex,
+            offsetBy: selection.location,
+            limitedBy: utf16.endIndex),
+            let endUTF16 = utf16.index(
+                startUTF16,
+                offsetBy: selection.length,
+                limitedBy: utf16.endIndex),
+            let start = String.Index(startUTF16, within: currentText),
+            let end = String.Index(endUTF16, within: currentText)
+        else {
+            return (currentText + replacement, currentText.utf16.count + replacement.utf16.count)
+        }
+
+        let updated = currentText.replacingCharacters(in: start..<end, with: replacement)
+        return (updated, selection.location + replacement.utf16.count)
+    }
+
+    static func cursorLocationMovingLeft(from selection: CFRange, in text: String) -> Int {
+        if selection.length > 0 {
+            return selection.location
+        }
+        guard selection.location > 0,
+              let cursor = self.stringIndex(in: text, utf16Offset: selection.location)
+        else {
+            return max(0, selection.location - 1)
+        }
+
+        return text.index(before: cursor).utf16Offset(in: text)
+    }
+
+    static func cursorLocationMovingRight(from selection: CFRange, in text: String) -> Int {
+        if selection.length > 0 {
+            return selection.location + selection.length
+        }
+        let textLength = text.utf16.count
+        guard selection.location < textLength,
+              let cursor = self.stringIndex(in: text, utf16Offset: selection.location)
+        else {
+            return min(textLength, selection.location + 1)
+        }
+
+        return text.index(after: cursor).utf16Offset(in: text)
+    }
+
+    private static func clampedSelection(_ selection: CFRange?, textLength: Int) -> CFRange {
+        guard let selection,
+              selection.location >= 0,
+              selection.length >= 0
+        else {
+            return CFRange(location: textLength, length: 0)
+        }
+
+        let location = min(selection.location, textLength)
+        let length = min(selection.length, textLength - location)
+        return CFRange(location: location, length: length)
+    }
+
+    private static func deletionRangeBeforeSelection(_ selection: CFRange, in text: String) -> CFRange? {
+        if selection.length > 0 {
+            return selection
+        }
+        guard selection.location > 0,
+              let cursor = self.stringIndex(in: text, utf16Offset: selection.location)
+        else {
+            return nil
+        }
+
+        let previous = text.index(before: cursor)
+        return CFRange(
+            location: previous.utf16Offset(in: text),
+            length: cursor.utf16Offset(in: text) - previous.utf16Offset(in: text))
+    }
+
+    private static func deletionRangeAfterSelection(_ selection: CFRange, in text: String) -> CFRange? {
+        if selection.length > 0 {
+            return selection
+        }
+        guard let cursor = self.stringIndex(in: text, utf16Offset: selection.location),
+              cursor < text.endIndex
+        else {
+            return nil
+        }
+
+        let next = text.index(after: cursor)
+        return CFRange(
+            location: cursor.utf16Offset(in: text),
+            length: next.utf16Offset(in: text) - cursor.utf16Offset(in: text))
+    }
+
+    private static func stringIndex(in text: String, utf16Offset: Int) -> String.Index? {
+        let utf16 = text.utf16
+        guard let utf16Index = utf16.index(
+            utf16.startIndex,
+            offsetBy: utf16Offset,
+            limitedBy: utf16.endIndex)
+        else {
+            return nil
+        }
+        return String.Index(utf16Index, within: text)
+    }
+
+    private static func focusedEditableTextElement(targetProcessIdentifier: pid_t) throws -> AXUIElement? {
+        let application = AXUIElementCreateApplication(targetProcessIdentifier)
+        var focusedValue: CFTypeRef?
+        let focusedError = AXUIElementCopyAttributeValue(
+            application,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedValue)
+
+        guard focusedError != .apiDisabled else {
+            throw PeekabooError.permissionDeniedAccessibility
+        }
+        guard focusedError == .success,
+              let focusedValue,
+              CFGetTypeID(focusedValue) == AXUIElementGetTypeID()
+        else {
+            return nil
+        }
+
+        let element = unsafeDowncast(focusedValue, to: AXUIElement.self)
+        guard !self.isSecureTextElement(element),
+              self.isValueSettable(element)
+        else {
+            return nil
+        }
+        return element
+    }
+
+    private static func isValueSettable(_ element: AXUIElement) -> Bool {
+        var settable = DarwinBoolean(false)
+        let error = AXUIElementIsAttributeSettable(
+            element,
+            kAXValueAttribute as CFString,
+            &settable)
+        return error == .success && settable.boolValue
+    }
+
+    private static func isSecureTextElement(_ element: AXUIElement) -> Bool {
+        let role = self.stringAttribute(kAXRoleAttribute as CFString, from: element)
+        let subrole = self.stringAttribute(kAXSubroleAttribute as CFString, from: element)
+        return role == "AXSecureTextField" || subrole == "AXSecureTextField"
+    }
+
+    private static func textValue(from element: AXUIElement) throws -> String? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(
+            element,
+            kAXValueAttribute as CFString,
+            &value)
+        guard error != .apiDisabled else {
+            throw PeekabooError.permissionDeniedAccessibility
+        }
+        guard error == .success else {
+            return nil
+        }
+        return value as? String
+    }
+
+    private static func setText(_ text: String, on element: AXUIElement) throws -> Bool {
+        let error = AXUIElementSetAttributeValue(
+            element,
+            kAXValueAttribute as CFString,
+            text as CFTypeRef)
+        switch error {
+        case .success:
+            return true
+        case .apiDisabled:
+            throw PeekabooError.permissionDeniedAccessibility
+        default:
+            return false
+        }
+    }
+
+    private static func selectedTextRange(from element: AXUIElement) -> CFRange? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &value)
+        guard error == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID()
+        else {
+            return nil
+        }
+
+        var range = CFRange(location: 0, length: 0)
+        let axValue = unsafeDowncast(value, to: AXValue.self)
+        guard AXValueGetValue(axValue, .cfRange, &range) else {
+            return nil
+        }
+        return range
+    }
+
+    private static func setSelectedTextRange(_ range: CFRange, on element: AXUIElement) {
+        var range = range
+        guard let value = AXValueCreate(.cfRange, &range) else {
+            return
+        }
+        _ = AXUIElementSetAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            value)
+    }
+
+    private static func stringAttribute(_ attributeName: CFString, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attributeName, &value)
+        guard error == .success else { return nil }
+        return value as? String
     }
 
     private static func windowID(containing point: CGPoint, targetProcessIdentifier: pid_t) -> CGWindowID? {

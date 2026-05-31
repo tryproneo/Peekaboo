@@ -7,6 +7,9 @@ extension TypeService {
     func typeSpecialKey(_ key: PeekabooFoundation.SpecialKey, targetProcessIdentifier: pid_t? = nil) throws {
         let keyCode = TypeServiceSpecialKeyMapping.keyCode(for: key)
         if let targetProcessIdentifier {
+            if try BackgroundInputDriver.performFocusedTextKey(key, targetProcessIdentifier: targetProcessIdentifier) {
+                return
+            }
             try BackgroundInputDriver.tapKey(keyCode: keyCode, targetProcessIdentifier: targetProcessIdentifier)
         } else {
             try TypeServiceSpecialKeyMapping.postKey(keyCode)
