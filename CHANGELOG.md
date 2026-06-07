@@ -9,6 +9,7 @@
 ### Fixed
 - Action-only scroll now reports an empty target as unsupported, and generic process scripts preserve menu, modifier, drag, and type flag aliases. Thanks @coygeek for #178 and #179.
 - Clipboard writes now count companion text toward the large-payload guard and return previews for UTF-8 plain-text representations. Thanks @coygeek for #180.
+- Bridge-backed CLI JSON errors now preserve bridge message/details and map permission failures to permission-specific error codes. Thanks @coygeek for #181.
 
 ## [3.3.0] - 2026-06-01
 
