@@ -89,8 +89,9 @@ struct AgentCommand: RuntimeOptionsConfigurable {
     @Option(
         name: .long,
         help: """
-        AI model to use (for example: gpt-5.5, claude-opus-4-7, \
-        gemini-3-flash, minimax-m2.7, minimax-cn/m2.7, ollama/<model>, or lmstudio/<model>)
+        AI model to use (for example: gpt-5.5, claude-opus-4-8, \
+        gemini-3.5-flash, grok-4.3, minimax-m2.7, minimax-cn/m2.7, \
+        ollama/<model>, lmstudio/<model>, or <custom-provider>/<model>)
         """
     )
     var model: String?
@@ -212,36 +213,62 @@ extension AgentCommand {
 
         let requestedModel: LanguageModel?
         do {
-            requestedModel = try self.validatedModelSelection()
+            requestedModel = try self.validatedModelSelection(configuration: services.configuration)
         } catch {
             self.printAgentExecutionError(error.localizedDescription)
             throw ExitCode.failure
         }
 
-        let agentService: any AgentServiceProtocol
-        if let existing = services.agent {
-            agentService = existing
-        } else if let requestedModel {
-            agentService = try PeekabooAgentService(services: services, defaultModel: requestedModel)
-        } else {
+        let configuredAIService = PeekabooAIService(configuration: services.configuration)
+        let existingAgent = services.agent as? PeekabooAgentService
+        let existingAgentModel = existingAgent.flatMap {
+            configuredAIService.resolveConfiguredModel($0.defaultModelSelection) ??
+                LanguageModel.parse(from: $0.defaultModelSelection)
+        }
+        let selectedModel = requestedModel ??
+            self.implicitToolModel(
+                from: configuredAIService,
+                configuration: services.configuration,
+                existingAgentModel: existingAgentModel
+            )
+        if self.listSessions {
+            let listingModel = selectedModel ?? existingAgentModel ?? .anthropic(.opus48)
+            let agentService: any AgentServiceProtocol = if let existing = existingAgent {
+                existing
+            } else {
+                try PeekabooAgentService(services: services, defaultModel: listingModel)
+            }
+            try await self.showSessions(agentService)
+            return
+        }
+
+        guard let selectedModel else {
             self.emitAgentUnavailableMessage()
             return
+        }
+
+        guard self.hasCredentials(for: selectedModel) || self.isLocalModel(selectedModel) else {
+            if requestedModel != nil {
+                let providerName = self.providerDisplayName(for: selectedModel)
+                let envVar = self.providerEnvironmentVariable(for: selectedModel)
+                self.printAgentExecutionError(
+                    "Missing API key for \(providerName). Set \(envVar) and retry."
+                )
+            } else {
+                self.emitAgentUnavailableMessage()
+            }
+            return
+        }
+
+        let agentService: any AgentServiceProtocol = if let existing = existingAgent {
+            existing
+        } else {
+            try PeekabooAgentService(services: services, defaultModel: selectedModel)
         }
 
         let terminalCapabilities = TerminalDetector.detectCapabilities()
         if self.debugTerminal {
             self.printTerminalDetectionDebug(terminalCapabilities, actualMode: self.outputMode)
-        }
-
-        if self.listSessions {
-            try await self.showSessions(agentService)
-            return
-        }
-
-        guard self.hasConfiguredAIProvider(configuration: services.configuration) || self.isLocalModel(requestedModel)
-        else {
-            self.emitAgentUnavailableMessage()
-            return
         }
 
         let shouldSuppressMCPLogs = !self.verbose && !self.debugTerminal
@@ -251,7 +278,7 @@ extension AgentCommand {
             throw PeekabooError.commandFailed("Agent service not properly initialized")
         }
 
-        guard await self.ensureAgentHasCredentials(peekabooAgent, requestedModel: requestedModel) else {
+        guard self.ensureAgentHasCredentials(selectedModel: selectedModel) else {
             return
         }
 
@@ -332,32 +359,11 @@ extension AgentCommand {
         }
     }
 
-    private func hasConfiguredAIProvider(configuration: PeekabooCore.ConfigurationManager) -> Bool {
-        let hasOpenAI = configuration.hasOpenAIAuth()
-        let hasAnthropic = configuration.hasAnthropicAuth()
-        let hasGemini = configuration.getGeminiAPIKey()?.isEmpty == false
-        let hasMiniMax = configuration.getMiniMaxAPIKey()?.isEmpty == false
-        let hasMiniMaxChina = configuration.getMiniMaxChinaAPIKey()?.isEmpty == false
-        let hasOpenRouter = configuration.getOpenRouterAPIKey()?.isEmpty == false
-        let hasLocalProvider = configuration.getAIProviders()
-            .split(separator: ",")
-            .contains { entry in
-                let provider = entry
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .split(separator: "/", maxSplits: 1)
-                    .first?
-                    .lowercased()
-                return provider == "ollama" || provider == "lmstudio" || provider == "lm-studio"
-            }
-        return hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasMiniMaxChina || hasOpenRouter ||
-            hasLocalProvider
-    }
-
     func emitAgentUnavailableMessage() {
         if self.jsonOutput {
             let message = "Agent service not available. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, " +
-                "GEMINI_API_KEY, MINIMAX_API_KEY, MINIMAX_CN_API_KEY, OPENROUTER_API_KEY, " +
-                "or configure ollama/<model> or lmstudio/<model>."
+                "GEMINI_API_KEY, X_AI_API_KEY, MINIMAX_API_KEY, MINIMAX_CN_API_KEY, OPENROUTER_API_KEY, " +
+                "or configure ollama/<model>, lmstudio/<model>, or a custom provider."
             let error = [
                 "success": false,
                 "error": message
@@ -371,9 +377,9 @@ extension AgentCommand {
         } else {
             let errorPrefix = [
                 "\(TerminalColor.red)Error: Agent service not available.",
-                " Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, MINIMAX_API_KEY,",
-                " MINIMAX_CN_API_KEY, OPENROUTER_API_KEY,",
-                " or configure ollama/<model> or lmstudio/<model>."
+                " Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, X_AI_API_KEY,",
+                " MINIMAX_API_KEY, MINIMAX_CN_API_KEY, OPENROUTER_API_KEY,",
+                " or configure ollama/<model>, lmstudio/<model>, or a custom provider."
             ].joined()
             let errorMessageLine = [errorPrefix, "\(TerminalColor.reset)"].joined()
             print(errorMessageLine)

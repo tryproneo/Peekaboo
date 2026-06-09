@@ -181,6 +181,35 @@ struct ConfigurationAccessorsOAuthTests {
         }
     }
 
+    @Test
+    func `Provider aliases skip empty higher-priority environment values`() throws {
+        try withIsolatedConfigurationEnvironment { _ in
+            self.unsetAllAliasedProviderEnv()
+            setenv("GEMINI_API_KEY", "", 1)
+            setenv("GOOGLE_API_KEY", "placeholder-google-key", 1)
+            setenv("X_AI_API_KEY", "", 1)
+            setenv("XAI_API_KEY", "placeholder-xai-key", 1)
+            self.manager.resetForTesting()
+
+            #expect(self.manager.getGeminiAPIKey() == "placeholder-google-key")
+            #expect(self.manager.getGrokAPIKey() == "placeholder-xai-key")
+        }
+    }
+
+    @Test
+    func `Grok aliases skip empty higher-priority stored credentials`() throws {
+        try withIsolatedConfigurationEnvironment { _ in
+            self.unsetAllAliasedProviderEnv()
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials([
+                "X_AI_API_KEY": "",
+                "GROK_API_KEY": "placeholder-grok-key",
+            ])
+
+            #expect(self.manager.getGrokAPIKey() == "placeholder-grok-key")
+        }
+    }
+
     // MARK: - Helpers
 
     private func unsetAllAnthropicEnv() {
@@ -200,6 +229,12 @@ struct ConfigurationAccessorsOAuthTests {
 
     private func unsetAllOpenRouterEnv() {
         unsetenv("OPENROUTER_API_KEY")
+    }
+
+    private func unsetAllAliasedProviderEnv() {
+        for key in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"] {
+            unsetenv(key)
+        }
     }
 }
 
@@ -222,6 +257,11 @@ private func withIsolatedConfigurationEnvironment(_ body: (URL) throws -> Void) 
         "OPENAI_ACCESS_TOKEN",
         "OPENAI_REFRESH_TOKEN",
         "OPENAI_ACCESS_EXPIRES",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "X_AI_API_KEY",
+        "XAI_API_KEY",
+        "GROK_API_KEY",
     ]
     let previousEnvironment = Dictionary(uniqueKeysWithValues: environmentKeys.map { key in
         (key, getenv(key).map { String(cString: $0) })

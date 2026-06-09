@@ -34,7 +34,54 @@ extension ConfigurationManager {
             cliValue: cliValue,
             envVar: "PEEKABOO_AI_PROVIDERS",
             configValue: self.configuration?.aiProviders?.providers,
-            defaultValue: "openai/gpt-5.5,anthropic/claude-opus-4-7")
+            defaultValue: "openai/gpt-5.5,anthropic/claude-opus-4-8")
+    }
+
+    /// Whether the provider list came from an explicit user selection rather than an app-generated fallback list.
+    public func hasExplicitAIProviderList() -> Bool {
+        if self.environmentValue(for: "PEEKABOO_AI_PROVIDERS")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty == false
+        {
+            return true
+        }
+
+        guard let providers = self.configuration?.aiProviders?.providers?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !providers.isEmpty
+        else {
+            return false
+        }
+
+        return !Self.isGeneratedAIProviderList(
+            providers,
+            configuredDefault: self.configuration?.agent?.defaultModel)
+    }
+
+    public static func isGeneratedAIProviderList(_ providers: String, configuredDefault: String?) -> Bool {
+        let entries = providers
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+
+        if entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-7"] ||
+            entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-8"]
+        {
+            return true
+        }
+
+        let entriesWithoutVisionFallback = entries.filter { entry in
+            entry != "ollama/llava" && entry != "ollama/llava:latest"
+        }
+
+        guard entriesWithoutVisionFallback.count == 1,
+              entriesWithoutVisionFallback.count < entries.count,
+              let entry = entriesWithoutVisionFallback.first,
+              let configuredDefault = configuredDefault?.lowercased(),
+              let model = entry.split(separator: "/", maxSplits: 1).last.map(String.init)
+        else {
+            return false
+        }
+        return model == configuredDefault || entry == configuredDefault
     }
 
     /// Get OpenAI API key with proper precedence.
@@ -119,13 +166,13 @@ extension ConfigurationManager {
     /// Get Gemini API key with proper precedence
     public func getGeminiAPIKey() -> String? {
         for key in ["GEMINI_API_KEY", "GOOGLE_API_KEY"] {
-            if let envValue = self.environmentValue(for: key) {
+            if let envValue = self.environmentValue(for: key), !envValue.isEmpty {
                 return envValue
             }
         }
 
         for key in ["GEMINI_API_KEY", "GOOGLE_API_KEY"] {
-            if let credValue = credentials[key] {
+            if let credValue = credentials[key], !credValue.isEmpty {
                 return credValue
             }
         }
@@ -180,6 +227,23 @@ extension ConfigurationManager {
         return nil
     }
 
+    /// Get xAI/Grok API key with proper precedence.
+    public func getGrokAPIKey() -> String? {
+        for key in ["X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"] {
+            if let envValue = self.environmentValue(for: key), !envValue.isEmpty {
+                return envValue
+            }
+        }
+
+        for key in ["X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"] {
+            if let credValue = self.credentials[key], !credValue.isEmpty {
+                return credValue
+            }
+        }
+
+        return nil
+    }
+
     /// Apply Peekaboo-managed provider keys to Tachikoma.
     public func applyAIProviderKeys(to configuration: TachikomaConfiguration = .current) {
         if let key = self.getOpenAIAPIKey(), !key.isEmpty {
@@ -199,6 +263,9 @@ extension ConfigurationManager {
         }
         if let key = self.getOpenRouterAPIKey(), !key.isEmpty {
             configuration.setAPIKey(key, for: "openrouter")
+        }
+        if let key = self.getGrokAPIKey(), !key.isEmpty {
+            configuration.setAPIKey(key, for: .grok)
         }
         let ollamaBaseURL = self.getOllamaBaseURL()
         if !ollamaBaseURL.isEmpty {
@@ -252,6 +319,12 @@ extension ConfigurationManager {
               let provider = self.parseFirstProvider(providers)
         else {
             return "anthropic"
+        }
+
+        if let customProviderID = self.configuration?.customProviders?.first(where: {
+            $0.value.enabled && $0.key.caseInsensitiveCompare(provider) == .orderedSame
+        })?.key {
+            return customProviderID
         }
 
         switch provider.lowercased() {

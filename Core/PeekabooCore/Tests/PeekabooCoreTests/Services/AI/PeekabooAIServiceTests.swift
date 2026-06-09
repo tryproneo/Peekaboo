@@ -26,7 +26,7 @@ struct PeekabooAIServiceTests {
         let models = service.availableModels()
 
         #expect(!models.isEmpty)
-        #expect(models == [.openai(.gpt55), .anthropic(.opus47)])
+        #expect(models == [.openai(.gpt55), .anthropic(.opus48)])
     }
 
     @Test
@@ -187,8 +187,8 @@ struct PeekabooAIServiceTests {
         _ = ConfigurationManager.shared.loadConfiguration()
 
         let service = PeekabooAIService()
-        #expect(service.resolvedDefaultModel == .anthropic(.opus47))
-        #expect(service.availableModels() == [.anthropic(.opus47)])
+        #expect(service.resolvedDefaultModel == .anthropic(.opus48))
+        #expect(service.availableModels() == [.anthropic(.opus48)])
     }
 
     @Test
@@ -215,8 +215,8 @@ struct PeekabooAIServiceTests {
         _ = ConfigurationManager.shared.loadConfiguration()
 
         let service = PeekabooAIService()
-        #expect(service.resolvedDefaultModel == .google(.gemini3Flash))
-        #expect(service.availableModels() == [.google(.gemini3Flash)])
+        #expect(service.resolvedDefaultModel == .google(.gemini35Flash))
+        #expect(service.availableModels() == [.google(.gemini35Flash)])
     }
 
     @Test

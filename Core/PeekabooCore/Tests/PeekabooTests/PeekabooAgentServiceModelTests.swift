@@ -19,8 +19,8 @@ struct PeekabooAgentServiceTests {
         let mockServices = self.makeServices()
         let agentService = try PeekabooAgentService(services: mockServices)
 
-        // Should default to Claude Opus 4.7
-        #expect(agentService.defaultModel == LanguageModel.anthropic(.opus47).description)
+        // Should default to Claude Opus 4.8
+        #expect(agentService.defaultModel == LanguageModel.anthropic(.opus48).description)
     }
 
     @Test
@@ -42,7 +42,7 @@ struct PeekabooAgentServiceTests {
             let services = self.makeServices()
             let agentService = try #require(services.agent as? PeekabooAgentService)
 
-            #expect(agentService.defaultModel == LanguageModel.google(.gemini3Flash).description)
+            #expect(agentService.defaultModel == LanguageModel.google(.gemini35Flash).description)
         }
     }
 
@@ -59,6 +59,372 @@ struct PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `xAI only credentials initialize Grok default agent`() throws {
+        try self.withIsolatedAgentEnvironment(["X_AI_API_KEY": "test-xai-key"]) {
+            let services = self.makeServices()
+            let agentService = try #require(services.agent as? PeekabooAgentService)
+
+            #expect(agentService.defaultModel == LanguageModel.grok(.grok43).description)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Generated provider list preserves available model order`() throws {
+        try self.withIsolatedAgentEnvironment([
+            "OPENAI_API_KEY": "test-openai-key",
+            "ANTHROPIC_API_KEY": "test-anthropic-key",
+        ]) {
+            let services = self.makeServices()
+            let agentService = try #require(services.agent as? PeekabooAgentService)
+
+            #expect(agentService.defaultModel == LanguageModel.openai(.gpt55).description)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Saved custom provider initializes default agent`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModel == "Custom/local-proxy/mini")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Saved custom provider default preserves model alias metadata`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "alias": {
+                      "name": "same",
+                      "supportsVision": false,
+                      "supportsTools": true
+                    },
+                    "same": {
+                      "name": "wrong",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModelSelection == "local-proxy/alias")
+                #expect(agentService.defaultLanguageModel.modelId == "local-proxy/alias")
+                #expect(!agentService.defaultLanguageModel.supportsVision)
+                #expect(agentService.resolveConfiguredModel("local-proxy/alias")?.modelId == "local-proxy/alias")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Configured custom default wins over built-in credentials`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [
+                "OPENAI_API_KEY": "test-openai-key",
+                "PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret",
+            ],
+            configurationJSON: """
+            {
+              "agent": {
+                "defaultModel": "local-proxy/mini"
+              },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModel == "Custom/local-proxy/mini")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Settings-style custom default wins over built-in credentials`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [
+                "OPENAI_API_KEY": "test-openai-key",
+                "PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret",
+            ],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "local-proxy/mini,ollama/llava:latest"
+              },
+              "agent": {
+                "defaultModel": "mini"
+              },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModel == "Custom/local-proxy/mini")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Saved custom provider does not override built-in credentials`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [
+                "GEMINI_API_KEY": "test-gemini-key",
+                "PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret",
+            ],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Display Name",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModel == LanguageModel.google(.gemini35Flash).description)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Non-tool custom provider does not initialize agent`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true,
+                      "supportsTools": false
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+
+                #expect(services.agent == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Explicit custom provider list initializes default agent`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "local-proxy/mini"
+              },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModel == "Custom/local-proxy/mini")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Explicit custom provider list preserves custom order before built-in`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [
+                "ANTHROPIC_API_KEY": "test-anthropic-key",
+                "PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret",
+            ],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "local-proxy/mini,anthropic/claude-opus-4-8"
+              },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModel == "Custom/local-proxy/mini")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Missing custom default credentials fall back to available built-in`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["OPENAI_API_KEY": "test-openai-key"],
+            configurationJSON: """
+            {
+              "agent": {
+                "defaultModel": "local-proxy/mini"
+              },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_MISSING_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModel == LanguageModel.openai(.gpt55).description)
+            }
+    }
+
+    @Test
+    @MainActor
     func `MiniMax China only credentials initialize MiniMax China default agent`() throws {
         try self.withIsolatedAgentEnvironment(["MINIMAX_CN_API_KEY": "test-minimax-cn-key"]) {
             let services = self.makeServices()
@@ -66,6 +432,81 @@ struct PeekabooAgentServiceTests {
 
             #expect(agentService.defaultModel == LanguageModel.minimaxCN(.m27).description)
         }
+    }
+
+    @Test
+    @MainActor
+    func `Unavailable custom alias does not fall through to hosted provider`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["X_AI_API_KEY": "test-xai-key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "xai/mini"
+              },
+              "customProviders": {
+                "xai": {
+                  "name": "Custom xAI Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_MISSING_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+
+                #expect(services.agent == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Generated custom provider selection does not fall through to shadowed hosted provider`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["X_AI_API_KEY": "test-xai-key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "xai/mini,ollama/llava:latest"
+              },
+              "agent": {
+                "defaultModel": "xai/mini"
+              },
+              "customProviders": {
+                "xai": {
+                  "name": "Custom xAI Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_MISSING_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+
+                #expect(services.agent == nil)
+            }
     }
 
     @Test
@@ -105,7 +546,7 @@ struct PeekabooAgentServiceTests {
                 let services = self.makeServices()
                 let agentService = try #require(services.agent as? PeekabooAgentService)
 
-                #expect(agentService.defaultModel == LanguageModel.google(.gemini3Flash).description)
+                #expect(agentService.defaultModel == LanguageModel.google(.gemini35Flash).description)
             }
     }
 
@@ -154,7 +595,7 @@ struct PeekabooAgentServiceTests {
             let services = self.makeServices()
             let agentService = try #require(services.agent as? PeekabooAgentService)
 
-            #expect(agentService.defaultModel == LanguageModel.google(.gemini3Flash).description)
+            #expect(agentService.defaultModel == LanguageModel.google(.gemini35Flash).description)
         }
     }
 
@@ -181,6 +622,42 @@ struct PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `Explicit provider list does not fall back to custom default`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "openai/gpt-5.5"
+              },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+
+                #expect(services.agent == nil)
+            }
+    }
+
+    @Test
+    @MainActor
     func `Configured Ollama provider initializes local default agent`() throws {
         try self.withIsolatedAgentEnvironment(["PEEKABOO_AI_PROVIDERS": "ollama/llama3.3"]) {
             let services = self.makeServices()
@@ -188,6 +665,43 @@ struct PeekabooAgentServiceTests {
 
             #expect(agentService.defaultModel == LanguageModel.ollama(.llama33).description)
         }
+    }
+
+    @Test
+    @MainActor
+    func `Unhandled hosted provider does not borrow unrelated credentials`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["GEMINI_API_KEY": "test-gemini-key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "mistral/mistral-large-latest"
+              }
+            }
+            """) {
+                let services = self.makeServices()
+
+                #expect(services.agent == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Explicit provider list initializes server-redirected Grok model`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["X_AI_API_KEY": "test-xai-key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "xai/grok-code-fast-1"
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModel == LanguageModel.grok(.custom("grok-code-fast-1")).description)
+            }
     }
 
     @Test
@@ -230,7 +744,18 @@ struct PeekabooAgentServiceTests {
             let agentService = try #require(services.agent as? PeekabooAgentService)
 
             #expect(agentService.defaultModel == LanguageModel.lmstudio(.gptOSS120B).description)
+            #expect(agentService.defaultModelSelection == "lmstudio/openai/gpt-oss-120b")
         }
+    }
+
+    @Test
+    @MainActor
+    func `Default model selection preserves OpenRouter provider identity`() throws {
+        let agentService = try PeekabooAgentService(
+            services: self.makeServices(),
+            defaultModel: .openRouter(modelId: "openai/gpt-oss-120b"))
+
+        #expect(agentService.defaultModelSelection == "openrouter/openai/gpt-oss-120b")
     }
 
     @Test
@@ -288,6 +813,11 @@ struct PeekabooAgentServiceTests {
             "ANTHROPIC_API_KEY",
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
+            "X_AI_API_KEY",
+            "XAI_API_KEY",
+            "GROK_API_KEY",
+            "PEEKABOO_CUSTOM_PROVIDER_KEY",
+            "PEEKABOO_MISSING_PROVIDER_KEY",
             "MINIMAX_API_KEY",
             "MINIMAX_CN_API_KEY",
             "PEEKABOO_OLLAMA_BASE_URL",
@@ -304,6 +834,7 @@ struct PeekabooAgentServiceTests {
                     unsetenv(key)
                 }
             }
+            TachikomaConfiguration.current.removeAPIKey(for: .grok)
             ConfigurationManager.shared.resetForTesting()
         }
 
@@ -325,10 +856,16 @@ struct PeekabooAgentServiceTests {
         unsetenv("ANTHROPIC_API_KEY")
         unsetenv("GEMINI_API_KEY")
         unsetenv("GOOGLE_API_KEY")
+        unsetenv("X_AI_API_KEY")
+        unsetenv("XAI_API_KEY")
+        unsetenv("GROK_API_KEY")
+        unsetenv("PEEKABOO_CUSTOM_PROVIDER_KEY")
+        unsetenv("PEEKABOO_MISSING_PROVIDER_KEY")
         unsetenv("MINIMAX_API_KEY")
         unsetenv("MINIMAX_CN_API_KEY")
         unsetenv("PEEKABOO_OLLAMA_BASE_URL")
         unsetenv("OLLAMA_BASE_URL")
+        TachikomaConfiguration.current.removeAPIKey(for: .grok)
         for (key, value) in overrides {
             setenv(key, value, 1)
         }
@@ -466,6 +1003,168 @@ struct PeekabooAgentServiceTests {
 
         #expect(result.metadata.modelName == LanguageModel.openai(.gpt55).description)
         #expect(result.content.contains("Dry run"))
+    }
+}
+
+extension PeekabooAgentServiceTests {
+    @Test
+    @MainActor
+    func `Generated default with unknown shadowing custom model does not use hosted fallback`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [
+                "OPENAI_API_KEY": "hosted-openai-key",
+                "PEEKABOO_CUSTOM_PROVIDER_KEY": "custom-secret",
+            ],
+            configurationJSON: """
+            {
+              "agent": {
+                "defaultModel": "openai/gpt-5.5"
+              },
+              "customProviders": {
+                "openai": {
+                  "name": "Custom OpenAI Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+
+                #expect(services.agent == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Unknown model on shadowing custom provider does not use hosted fallback`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [
+                "OPENAI_API_KEY": "hosted-openai-key",
+                "PEEKABOO_CUSTOM_PROVIDER_KEY": "custom-secret",
+            ],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "openai/gpt-5.5"
+              },
+              "customProviders": {
+                "openai": {
+                  "name": "Custom OpenAI Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+
+                #expect(services.agent == nil)
+            }
+    }
+}
+
+struct PeekabooAgentResumeTests {
+    @Test
+    @MainActor
+    func `Resume session respects max steps`() async throws {
+        let provider = StepCountingProvider()
+        let configuration = TachikomaConfiguration(loadFromEnvironment: false)
+        configuration.setProviderFactoryOverride { _, _ in provider }
+
+        let previousConfiguration = TachikomaConfiguration.default
+        TachikomaConfiguration.default = configuration
+        defer {
+            TachikomaConfiguration.default = previousConfiguration
+        }
+
+        let agentService = try PeekabooAgentService(
+            services: PeekabooServices(),
+            defaultModel: .openai(.gpt55))
+        let sessionId = "resume-max-steps-\(UUID().uuidString)"
+        let now = Date()
+        try agentService.sessionManager.saveSession(AgentSession(
+            id: sessionId,
+            modelName: LanguageModel.openai(.gpt55).description,
+            messages: [
+                .system("Test system prompt"),
+                .user("Test task"),
+            ],
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+
+        do {
+            _ = try await agentService.resumeSession(
+                sessionId: sessionId,
+                model: .openai(.gpt55),
+                maxSteps: 1)
+            try await agentService.deleteSession(id: sessionId)
+        } catch {
+            try? await agentService.deleteSession(id: sessionId)
+            throw error
+        }
+
+        #expect(provider.requestCount == 1)
+    }
+}
+
+private final class StepCountingProvider: ModelProvider, @unchecked Sendable {
+    let modelId = "step-counting-provider"
+    let baseURL: String? = nil
+    let apiKey: String? = nil
+    let capabilities = ModelCapabilities()
+
+    private let lock = NSLock()
+    private var _requestCount = 0
+
+    var requestCount: Int {
+        self.lock.withLock { self._requestCount }
+    }
+
+    func generateText(request _: ProviderRequest) async throws -> ProviderResponse {
+        let requestCount = self.lock.withLock {
+            self._requestCount += 1
+            return self._requestCount
+        }
+        return ProviderResponse(
+            text: "step \(requestCount)",
+            finishReason: .toolCalls,
+            toolCalls: [
+                AgentToolCall(
+                    id: "missing-tool-\(requestCount)",
+                    name: "missing_test_tool",
+                    arguments: [:]),
+            ])
+    }
+
+    func streamText(request: ProviderRequest) async throws -> AsyncThrowingStream<TextStreamDelta, any Error> {
+        let response = try await self.generateText(request: request)
+        return AsyncThrowingStream { continuation in
+            continuation.yield(TextStreamDelta(type: .textDelta, content: response.text))
+            continuation.yield(TextStreamDelta(type: .done))
+            continuation.finish()
+        }
     }
 }
 

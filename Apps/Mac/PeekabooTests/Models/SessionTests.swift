@@ -26,6 +26,12 @@ struct ConversationSessionTests {
     }
 
     @Test
+    func `Supported Anthropic model names remain human readable`() {
+        #expect(formatModelName("claude-opus-4-7") == "Claude Opus 4.7")
+        #expect(formatModelName("claude-sonnet-4-5-20250929") == "Claude Sonnet 4.5")
+    }
+
+    @Test
     func `Session codable roundtrip`() throws {
         // Create a session with messages
         var session = ConversationSession(title: "Codable Test")

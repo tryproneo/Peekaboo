@@ -94,6 +94,7 @@ extension PeekabooAgentService {
     public func resumeSession(
         sessionId: String,
         model: LanguageModel? = nil,
+        maxSteps: Int = 20,
         eventDelegate: (any AgentEventDelegate)? = nil) async throws -> AgentExecutionResult
     {
         let continuationPrompt = "Continue from where we left off."
@@ -101,7 +102,7 @@ extension PeekabooAgentService {
             sessionId: sessionId,
             userMessage: continuationPrompt,
             model: model,
-            maxSteps: 20,
+            maxSteps: maxSteps,
             dryRun: false,
             eventDelegate: eventDelegate,
             verbose: self.isVerbose)

@@ -30,9 +30,10 @@ This document outlines the implementation plan for integrating xAI's Grok 4 mode
 
 ### Available Models (confirmed working)
 - **grok-4.3** - Current Grok default
-- **grok-4.20-multi-agent-0309** - Multi-agent Grok 4.20 variant
 - **grok-4.20-0309-reasoning** - Reasoning Grok 4.20 variant
 - **grok-4.20-0309-non-reasoning** - Non-reasoning Grok 4.20 variant
+
+`grok-4.20-multi-agent-0309` requires xAI Responses API routing and is not exposed by Peekaboo's Chat Completions-backed Grok provider yet.
 
 Model shortcuts in Peekaboo:
 - `grok` → resolves to `grok-4.3`
@@ -465,7 +466,6 @@ registerGrokModels()
 private func registerGrokModels() {
     let models = [
         "grok-4.3",
-        "grok-4.20-multi-agent-0309",
         "grok-4.20-0309-reasoning",
         "grok-4.20-0309-non-reasoning"
     ]
@@ -551,7 +551,6 @@ extension ModelProvider {
     public func configureGrok(_ config: ModelProviderConfig.Grok) {
         let models = [
             "grok-4.3",
-            "grok-4.20-multi-agent-0309",
             "grok-4.20-0309-reasoning",
             "grok-4.20-0309-non-reasoning"
         ]

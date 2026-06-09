@@ -107,7 +107,7 @@ struct AnthropicModelTests {
         #expect(opus45.modelId != haiku45.modelId)
 
         // Current Anthropic context windows are model-specific, not a simple family hierarchy.
-        #expect(Model.anthropic(.opus47).contextLength == 1_000_000)
+        #expect(Model.anthropic(.opus48).contextLength == 1_000_000)
         #expect(sonnet46.contextLength == 1_000_000)
         #expect(opus45.contextLength == 500_000)
         #expect(haiku45.contextLength == 200_000)
@@ -116,16 +116,16 @@ struct AnthropicModelTests {
 
     @Test
     func `Anthropic current models support tools`() {
-        let opus47 = Model.anthropic(.opus47)
+        let opus48 = Model.anthropic(.opus48)
         let sonnet46 = Model.anthropic(.sonnet46)
 
-        #expect(opus47.providerName == "Anthropic")
+        #expect(opus48.providerName == "Anthropic")
         #expect(sonnet46.providerName == "Anthropic")
 
-        #expect(!opus47.modelId.contains("thinking"))
+        #expect(!opus48.modelId.contains("thinking"))
         #expect(!sonnet46.modelId.contains("thinking"))
 
-        #expect(opus47.supportsTools == true)
+        #expect(opus48.supportsTools == true)
         #expect(sonnet46.supportsTools == true)
     }
 }

@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import os.log
+import PeekabooAutomation
 import Tachikoma
 import TachikomaMCP
 
@@ -13,7 +14,7 @@ public struct MCPAgentTool: MCPTool {
 
     public var description: String {
         """
-        Execute complex automation tasks using an AI agent powered by OpenAI's Assistants API.
+        Execute complex automation tasks using the configured AI provider.
         The agent can understand natural language instructions and break them down into specific
         Peekaboo commands to accomplish complex workflows.
 
@@ -37,8 +38,8 @@ public struct MCPAgentTool: MCPTool {
         - "Find the login button and click it, then type my credentials"
         - "Open TextEdit, write 'Hello World', and save the document"
 
-        Requires OPENAI_API_KEY environment variable to be set.
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5 and anthropic/claude-opus-4-7
+        Requires a configured provider credential or local model runtime.
+        \(PeekabooMCPVersion.banner)
         """
     }
 
@@ -64,7 +65,7 @@ public struct MCPAgentTool: MCPTool {
                     description: "Dry run - show planned steps without executing",
                     default: false),
                 "max_steps": SchemaBuilder.integer(
-                    description: "Maximum number of steps the agent can take"),
+                    description: "Maximum number of steps the agent can take (1-100)"),
                 "resume": SchemaBuilder.boolean(
                     description: "Resume the most recent session",
                     default: false),
@@ -161,10 +162,16 @@ public struct MCPAgentTool: MCPTool {
             throw AgentToolError("Agent service not available")
         }
 
+        let maxSteps = try Self.validatedMaxSteps(input.maxSteps)
+        let modelOverride = try Self.modelOverride(from: input.model) { modelString in
+            agent.resolveConfiguredModel(modelString)
+        }
+
         if let sessionId = input.resumeSession {
             return try await agent.resumeSession(
                 sessionId: sessionId,
-                model: parseModelString(input.model ?? "gpt-5.5"))
+                model: modelOverride,
+                maxSteps: maxSteps)
         }
 
         if input.resume {
@@ -174,19 +181,49 @@ public struct MCPAgentTool: MCPTool {
             }
             return try await agent.resumeSession(
                 sessionId: latest.id,
-                model: parseModelString(input.model ?? "gpt-5.5"))
+                model: modelOverride,
+                maxSteps: maxSteps)
         }
 
         if input.dryRun {
-            return try await agent.executeTask(task, dryRun: true, eventDelegate: nil)
+            return try await agent.executeTask(
+                task,
+                maxSteps: maxSteps,
+                model: modelOverride,
+                dryRun: true,
+                eventDelegate: nil)
         }
 
         let sessionId = input.noCache ? nil : UUID().uuidString
         return try await agent.executeTask(
             task,
+            maxSteps: maxSteps,
             sessionId: sessionId,
-            model: parseModelString(input.model ?? "gpt-5.5"),
+            model: modelOverride,
             eventDelegate: nil)
+    }
+
+    static func validatedMaxSteps(_ maxSteps: Int?) throws -> Int {
+        let resolved = maxSteps ?? 20
+        guard (1...100).contains(resolved) else {
+            throw AgentToolError("max_steps must be between 1 and 100")
+        }
+        return resolved
+    }
+
+    static func modelOverride(
+        from modelString: String?,
+        resolver: (String) -> LanguageModel?) throws -> LanguageModel?
+    {
+        guard let modelString else { return nil }
+        let trimmed = modelString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let model = resolver(trimmed),
+              model.supportsTools
+        else {
+            throw AgentToolError("Unsupported agent model: \(modelString)")
+        }
+        return model
     }
 
     private func formatResult(result: AgentExecutionResult, input: AgentInput) -> ToolResponse {
@@ -298,14 +335,6 @@ struct AgentInput: Codable {
         self.listSessions = try container.decodeIfPresent(Bool.self, forKey: .listSessions) ?? false
         self.noCache = try container.decodeIfPresent(Bool.self, forKey: .noCache) ?? false
     }
-}
-
-// MARK: - Helper Functions
-
-/// Parse a model string into a LanguageModel enum
-private func parseModelString(_ modelString: String) -> LanguageModel {
-    // Parse a model string into a LanguageModel enum
-    LanguageModel.parse(from: modelString) ?? .anthropic(.opus47)
 }
 
 private struct AgentToolError: Error {

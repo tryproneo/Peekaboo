@@ -25,7 +25,8 @@ private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Senda
         baseURL: String,
         apiKey: String?,
         additionalHeaders: [String: String],
-        supportsVision: Bool)
+        supportsVision: Bool,
+        supportsTools: Bool)
     {
         self.providerID = providerID
         self.resolvedModelID = resolvedModelID
@@ -36,7 +37,7 @@ private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Senda
         self.additionalHeaders = additionalHeaders
         self.capabilities = ModelCapabilities(
             supportsVision: supportsVision,
-            supportsTools: true,
+            supportsTools: supportsTools,
             supportsStreaming: true)
     }
 
@@ -217,6 +218,27 @@ public final class PeekabooAIService {
         self.resolvedModels
     }
 
+    /// Resolve a user/config provider reference, including custom providers registered in Peekaboo config.
+    public func resolveConfiguredModel(_ modelString: String) -> LanguageModel? {
+        Self.parseProviderEntry(modelString, configuration: self.configuration)
+    }
+
+    /// Return true when an enabled custom provider owns this provider identifier.
+    public func hasEnabledCustomProvider(matching providerID: String) -> Bool {
+        guard let customProviderID = Self.customProviderID(
+            matching: providerID,
+            configuration: self.configuration)
+        else {
+            return false
+        }
+        return self.configuration.getCustomProvider(id: customProviderID)?.enabled == true
+    }
+
+    /// Return true when a model can be used with the current credentials or local runtime.
+    public func isModelAvailable(_ model: LanguageModel) -> Bool {
+        Self.hasCredentialsOrLocalRuntime(for: model, configuration: self.configuration)
+    }
+
     private func resolveVisionModel(_ model: LanguageModel?) throws -> LanguageModel {
         if let model {
             guard model.supportsVision else {
@@ -232,6 +254,19 @@ public final class PeekabooAIService {
     }
 
     private static func parseProviderEntry(_ entry: String, configuration: ConfigurationManager) -> LanguageModel? {
+        let components = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "/", maxSplits: 1)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if components.count == 2,
+           let customProviderID = self.customProviderID(matching: components[0], configuration: configuration),
+           configuration.getCustomProvider(id: customProviderID)?.enabled == true
+        {
+            return self.customProviderModel(
+                providerID: customProviderID,
+                modelString: components[1],
+                configuration: configuration).map { .custom(provider: $0) }
+        }
+
         if let parsed = AIProviderParser.parse(entry) {
             let provider = parsed.provider.lowercased()
             let modelString = parsed.model
@@ -243,13 +278,6 @@ public final class PeekabooAIService {
             }
             if self.isLocalProviderIdentifier(provider) {
                 return self.parseLocalProviderEntry(provider: provider, modelString: modelString)
-            }
-            if let customModel = self.customProviderModel(
-                providerID: provider,
-                modelString: modelString,
-                configuration: configuration)
-            {
-                return .custom(provider: customModel)
             }
             return nil
         }
@@ -309,11 +337,22 @@ public final class PeekabooAIService {
             if case .groq = loose { return loose }
             return nil
         case "grok", "xai":
+            guard !self.isUnsupportedGrokModel(modelString) else { return nil }
             if case .grok = loose { return loose }
             return .grok(.custom(modelString))
         default:
             return nil
         }
+    }
+
+    private static func isUnsupportedGrokModel(_ modelString: String) -> Bool {
+        let normalized = modelString.lowercased()
+        let compact = normalized
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: ".", with: "")
+        return normalized.contains("grok-4.20-multi-agent") ||
+            normalized.contains("grok-4-20-multi-agent") ||
+            compact.contains("grok420multiagent")
     }
 
     private static func parseLocalProviderEntry(provider: String, modelString: String) -> LanguageModel? {
@@ -336,23 +375,34 @@ public final class PeekabooAIService {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .compactMap { self.parseProviderEntry($0, configuration: configuration) }
 
-        if !parsed.isEmpty {
-            if self.hasExplicitProviderList(configuration: configuration) {
-                return parsed
-            }
+        if self.hasExplicitProviderList(configuration: configuration) {
+            return parsed
+        }
 
+        if !parsed.isEmpty {
             let available = parsed.filter { self.hasCredentialsOrLocalRuntime(for: $0, configuration: configuration) }
             if !available.isEmpty {
                 return self.appendingGeneratedVisionFallbacks(from: parsed, to: available)
+            }
+            if parsed.contains(where: { model in
+                if case .custom = model {
+                    return true
+                }
+                return false
+            }) {
+                return parsed
             }
         }
 
         // Fallback: prefer Anthropic if any auth (API key or OAuth) is present
         if configuration.hasAnthropicAuth() {
-            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.anthropic(.opus47)])
+            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.anthropic(.opus48)])
         }
         if let key = configuration.getGeminiAPIKey(), !key.isEmpty {
-            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.google(.gemini3Flash)])
+            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.google(.gemini35Flash)])
+        }
+        if let key = configuration.getGrokAPIKey(), !key.isEmpty {
+            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.grok(.grok43)])
         }
         if let key = configuration.getMiniMaxChinaAPIKey(fallbackToSharedKey: false), !key.isEmpty {
             return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.minimaxCN(.m27)])
@@ -365,7 +415,11 @@ public final class PeekabooAIService {
                 from: parsed,
                 to: [.openRouter(modelId: "openai/gpt-oss-120b")])
         }
-        return [.openai(.gpt55), .anthropic(.opus47)]
+        let customModels = self.customProviderModels(configuration: configuration)
+        if !customModels.isEmpty {
+            return self.appendingGeneratedVisionFallbacks(from: parsed, to: customModels)
+        }
+        return [.openai(.gpt55), .anthropic(.opus48)]
     }
 
     private static func appendingGeneratedVisionFallbacks(
@@ -407,7 +461,9 @@ public final class PeekabooAIService {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
 
-        if entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-7"] {
+        if entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-7"] ||
+            entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-8"]
+        {
             return true
         }
 
@@ -442,20 +498,15 @@ public final class PeekabooAIService {
         case .minimaxCN:
             configuration.getMiniMaxChinaAPIKey()?.isEmpty == false
         case .grok:
-            self.hasAnyCredential(["X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"], configuration: configuration)
+            configuration.getGrokAPIKey()?.isEmpty == false
         case .openRouter:
             configuration.getOpenRouterAPIKey()?.isEmpty == false
         case .ollama, .lmstudio:
             model.supportsTools
+        case let .custom(provider):
+            provider.apiKey?.isEmpty == false
         default:
-            true
-        }
-    }
-
-    private static func hasAnyCredential(_ keys: [String], configuration: ConfigurationManager) -> Bool {
-        keys.contains { key in
-            ProcessInfo.processInfo.environment[key]?.isEmpty == false ||
-                configuration.credentialValue(for: key)?.isEmpty == false
+            false
         }
     }
 
@@ -526,8 +577,11 @@ public final class PeekabooAIService {
             return nil
         }
 
-        let model = provider.models?[modelString]
-        let resolvedModelID = model?.name ?? modelString
+        let models = provider.models ?? [:]
+        guard models.isEmpty || models[modelString] != nil else {
+            return nil
+        }
+        let model = models[modelString]
         let kind: PeekabooCustomProviderModel.Kind = switch provider.type {
         case .openai: .openai
         case .anthropic: .anthropic
@@ -535,12 +589,47 @@ public final class PeekabooAIService {
 
         return PeekabooCustomProviderModel(
             providerID: providerID,
-            resolvedModelID: resolvedModelID,
+            resolvedModelID: modelString,
             kind: kind,
             baseURL: provider.options.baseURL,
             apiKey: configuration.resolveCredentialReference(provider.options.apiKey),
             additionalHeaders: provider.options.headers ?? [:],
-            supportsVision: model?.supportsVision ?? true)
+            supportsVision: model?.supportsVision ?? true,
+            supportsTools: model?.supportsTools ?? true)
+    }
+
+    private static func customProviderID(matching providerID: String, configuration: ConfigurationManager) -> String? {
+        if configuration.getCustomProvider(id: providerID) != nil {
+            return providerID
+        }
+
+        let matches = configuration.listCustomProviders().keys.filter {
+            $0.caseInsensitiveCompare(providerID) == .orderedSame
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private static func customProviderModels(configuration: ConfigurationManager) -> [LanguageModel] {
+        configuration.listCustomProviders()
+            .keys
+            .sorted()
+            .flatMap { providerID -> [LanguageModel] in
+                guard let provider = configuration.getCustomProvider(id: providerID),
+                      provider.enabled,
+                      configuration.resolveCredentialReference(provider.options.apiKey)?.isEmpty == false,
+                      let modelIDs = provider.models?.keys.sorted(),
+                      !modelIDs.isEmpty
+                else {
+                    return []
+                }
+
+                return modelIDs.compactMap { modelID in
+                    self.customProviderModel(
+                        providerID: providerID,
+                        modelString: modelID,
+                        configuration: configuration).map { .custom(provider: $0) }
+                }
+            }
     }
 
     nonisolated static func normalizeCoordinateTextIfNeeded(

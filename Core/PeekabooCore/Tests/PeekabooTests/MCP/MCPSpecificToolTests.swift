@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import PeekabooFoundation
 import Tachikoma
 import TachikomaMCP
 import Testing
@@ -366,12 +367,67 @@ struct MCPSpecificToolTests {
     }
 
     @Test
+    func `Analyze provider config preserves server-redirected Grok models`() throws {
+        for (provider, model) in [
+            ("grok", "grok-4-fast"),
+            ("xai", "grok-code-fast-1"),
+        ] {
+            #expect(try AnalyzeTool.languageModel(providerType: provider, modelName: model) == .grok(.custom(model)))
+        }
+    }
+
+    @Test
+    func `Analyze provider config rejects unsupported Grok multi-agent models`() throws {
+        for model in ["grok-4.20-multi-agent-0309", "grok420multiagent"] {
+            let error = #expect(throws: PeekabooError.self) {
+                try AnalyzeTool.languageModel(providerType: "xai", modelName: model)
+            }
+
+            if case let .invalidInput(message) = error {
+                #expect(message.contains("Unsupported Grok model"))
+            } else {
+                Issue.record("Expected invalidInput error")
+            }
+        }
+    }
+
+    @Test
     func `Analyze provider config can defer to configured default`() throws {
         let arguments = ToolArguments(raw: [:])
 
         let model = try AnalyzeTool.modelOverride(from: arguments)
 
         #expect(model == nil)
+    }
+
+    @Test
+    func `Agent model override preserves configured default and explicit provider resolution`() throws {
+        #expect(try MCPAgentTool.modelOverride(from: nil) { _ in
+            Issue.record("Resolver should not run without an explicit model")
+            return nil
+        } == nil)
+
+        let redirected = LanguageModel.grok(.custom("grok-code-fast-1"))
+        var resolvedModelString: String?
+        let model = try MCPAgentTool.modelOverride(from: "xai/grok-code-fast-1") { modelString in
+            resolvedModelString = modelString
+            return redirected
+        }
+        #expect(resolvedModelString == "xai/grok-code-fast-1")
+        #expect(model == redirected)
+    }
+
+    @Test
+    func `Agent max steps are bounded`() throws {
+        #expect(try MCPAgentTool.validatedMaxSteps(nil) == 20)
+        #expect(try MCPAgentTool.validatedMaxSteps(1) == 1)
+        #expect(try MCPAgentTool.validatedMaxSteps(100) == 100)
+        #expect(throws: (any Error).self) {
+            try MCPAgentTool.validatedMaxSteps(0)
+        }
+        #expect(throws: (any Error).self) {
+            try MCPAgentTool.validatedMaxSteps(101)
+        }
     }
 }
 

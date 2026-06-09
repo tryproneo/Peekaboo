@@ -88,14 +88,14 @@ struct AIProviderParserTests {
             hasOpenAI: false,
             hasAnthropic: true,
             hasOllama: false)
-        #expect(model1 == "claude-opus-4-7")
+        #expect(model1 == "claude-opus-4-8")
 
         let model2 = AIProviderParser.determineDefaultModel(
             from: "openai/gpt-5.5,anthropic/claude-sonnet-4.5,ollama/llava:latest",
             hasOpenAI: false,
             hasAnthropic: true,
             hasOllama: false)
-        #expect(model2 == "claude-opus-4-7")
+        #expect(model2 == "claude-opus-4-8")
 
         let model3 = AIProviderParser.determineDefaultModel(
             from: "openai/gpt-5.5,minimax/MiniMax-M2.7",
@@ -144,7 +144,7 @@ struct AIProviderParserTests {
             from: "invalid/model",
             hasOpenAI: false,
             hasAnthropic: true)
-        #expect(model1 == "claude-opus-4-7")
+        #expect(model1 == "claude-opus-4-8")
 
         let model2 = AIProviderParser.determineDefaultModel(
             from: "",
@@ -163,7 +163,7 @@ struct AIProviderParserTests {
             hasOpenAI: false,
             hasAnthropic: false,
             hasGemini: true)
-        #expect(model4 == "gemini-3-flash")
+        #expect(model4 == "gemini-3.5-flash")
     }
 
     @Test

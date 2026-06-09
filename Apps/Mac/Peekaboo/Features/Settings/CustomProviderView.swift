@@ -60,7 +60,7 @@ struct CustomProviderView: View {
                                 testResult: self.testResults[id],
                                 isTesting: self.isTestingConnection.contains(id),
                                 onSelect: {
-                                    self.settings.selectedProvider = id
+                                    self.settings.selectCustomProvider(id: id)
                                 },
                                 onEdit: {
                                     self.providerToEdit = IdentifiableCustomProvider((id, provider))
@@ -237,9 +237,11 @@ struct EditCustomProviderView: View {
     @Environment(PeekabooSettings.self) private var settings
 
     let providerId: String
+    private let originalProvider: Configuration.CustomProvider
     @State private var name: String
     @State private var description: String
     @State private var type: Configuration.CustomProvider.ProviderType
+    @State private var modelIds: String
     @State private var baseURL: String
     @State private var apiKey: String
     @State private var headers: String
@@ -248,9 +250,11 @@ struct EditCustomProviderView: View {
 
     init(providerId: String, provider: Configuration.CustomProvider) {
         self.providerId = providerId
+        self.originalProvider = provider
         self._name = State(initialValue: provider.name)
         self._description = State(initialValue: provider.description ?? "")
         self._type = State(initialValue: provider.type)
+        self._modelIds = State(initialValue: provider.models?.keys.sorted().joined(separator: ", ") ?? "")
         self._baseURL = State(initialValue: provider.options.baseURL)
         self._apiKey = State(initialValue: provider.options.apiKey)
 
@@ -305,6 +309,13 @@ struct EditCustomProviderView: View {
                     }
 
                     HStack {
+                        Text("Model IDs")
+                            .frame(width: 100, alignment: .trailing)
+                        TextField("model-id, another-model-id", text: self.$modelIds)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
                         Text("API Key")
                             .frame(width: 100, alignment: .trailing)
                         TextField("${OPENROUTER_API_KEY}", text: self.$apiKey)
@@ -345,7 +356,16 @@ struct EditCustomProviderView: View {
     }
 
     private var isValid: Bool {
-        !self.name.isEmpty && !self.baseURL.isEmpty && !self.apiKey.isEmpty
+        !self.name.isEmpty &&
+            Self.canSaveModels(self.modelIdentifiers, originalProvider: self.originalProvider) &&
+            !self.baseURL.isEmpty &&
+            !self.apiKey.isEmpty
+    }
+
+    private var modelIdentifiers: [String] {
+        Set(self.modelIds.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }).sorted()
     }
 
     private func saveProvider() {
@@ -364,28 +384,72 @@ struct EditCustomProviderView: View {
             }
         }
 
-        let options = Configuration.ProviderOptions(
-            baseURL: self.baseURL,
-            apiKey: self.apiKey,
-            headers: headerDict)
-
-        let provider = Configuration.CustomProvider(
+        let editedProvider = Configuration.CustomProvider(
             name: self.name,
             description: self.description.isEmpty ? nil : self.description,
             type: self.type,
-            options: options,
-            models: nil,
-            enabled: true)
+            options: Configuration.ProviderOptions(
+                baseURL: self.baseURL,
+                apiKey: self.apiKey,
+                headers: headerDict),
+            models: Self.editedModels(
+                modelIdentifiers: self.modelIdentifiers,
+                originalProvider: self.originalProvider))
+        let provider = Self.preservingMetadata(from: self.originalProvider, in: editedProvider)
 
         do {
-            // Remove old provider and add updated one
-            try self.settings.removeCustomProvider(id: self.providerId)
-            try self.settings.addCustomProvider(provider, id: self.providerId)
+            try self.settings.replaceCustomProvider(provider, id: self.providerId)
             self.dismiss()
         } catch {
             self.errorMessage = error.localizedDescription
             self.showingError = true
         }
+    }
+
+    static func canSaveModels(
+        _ modelIdentifiers: [String],
+        originalProvider: Configuration.CustomProvider) -> Bool
+    {
+        !modelIdentifiers.isEmpty || originalProvider.models?.isEmpty != false
+    }
+
+    static func editedModels(
+        modelIdentifiers: [String],
+        originalProvider: Configuration.CustomProvider) -> [String: Configuration.ModelDefinition]?
+    {
+        guard !modelIdentifiers.isEmpty else {
+            return originalProvider.models?.isEmpty == true ? [:] : nil
+        }
+        return Dictionary(uniqueKeysWithValues: modelIdentifiers.map {
+            ($0, Configuration.ModelDefinition(name: $0))
+        })
+    }
+
+    static func preservingMetadata(
+        from original: Configuration.CustomProvider,
+        in edited: Configuration.CustomProvider) -> Configuration.CustomProvider
+    {
+        let options = Configuration.ProviderOptions(
+            baseURL: edited.options.baseURL,
+            apiKey: edited.options.apiKey,
+            headers: edited.options.headers,
+            timeout: original.options.timeout,
+            retryAttempts: original.options.retryAttempts,
+            defaultParameters: original.options.defaultParameters)
+
+        let models = edited.models.map { editedModels in
+            Dictionary(uniqueKeysWithValues: editedModels.map { id, definition in
+                (id, original.models?[id] ?? definition)
+            })
+        } ?? original.models
+
+        return Configuration.CustomProvider(
+            name: edited.name,
+            description: edited.description,
+            type: edited.type,
+            options: options,
+            models: models,
+            enabled: original.enabled)
     }
 }
 

@@ -22,17 +22,25 @@ final class PeekabooSettings {
     /// API Configuration - Now synced with config.json
     var selectedProvider: String = "anthropic" {
         didSet {
-            let canonicalProvider = Self.canonicalProviderIdentifier(self.selectedProvider)
+            let canonicalProvider = self.canonicalProviderIdentifier(self.selectedProvider)
             if canonicalProvider != self.selectedProvider {
                 let wasLoading = self.isLoading
                 self.isLoading = true
                 self.selectedProvider = canonicalProvider
                 self.isLoading = wasLoading
+                if !wasLoading {
+                    self.save()
+                    self.updateConfigFile()
+                    self.services?.refreshAgentService()
+                }
                 return
             }
 
             self.save()
             self.updateConfigFile()
+            if !self.isLoading {
+                self.services?.refreshAgentService()
+            }
         }
     }
 
@@ -82,10 +90,13 @@ final class PeekabooSettings {
         didSet { self.save() }
     }
 
-    var selectedModel: String = "claude-opus-4-7" {
+    var selectedModel: String = "claude-opus-4-8" {
         didSet {
             self.save()
             self.updateConfigFile()
+            if !self.isLoading {
+                self.services?.refreshAgentService()
+            }
         }
     }
 
@@ -372,6 +383,12 @@ final class PeekabooSettings {
 
     /// Computed Properties
     var hasValidAPIKey: Bool {
+        if let customProviderID = self.customProviderIdentifier(matching: self.selectedProvider),
+           let customProvider = self.customProviders[customProviderID]
+        {
+            return self.configManager.resolveCredentialReference(customProvider.options.apiKey)?.isEmpty == false
+        }
+
         switch self.selectedProvider {
         case "openai":
             return !self.openAIAPIKey.isEmpty || self.isUsingOpenAIEnvironment ||
@@ -394,6 +411,8 @@ final class PeekabooSettings {
                 self.isUsingMiniMaxChinaEnvironment || self.isUsingMiniMaxEnvironment ||
                 self.hasCredentialValue(forAny: ["MINIMAX_CN_API_KEY", "MINIMAX_API_KEY"]) ||
                 self.configManager.getMiniMaxChinaAPIKey()?.isEmpty == false
+        case "openrouter":
+            return self.configManager.getOpenRouterAPIKey()?.isEmpty == false
         case "ollama", "lmstudio", "lm-studio":
             return true // Local providers don't require API keys.
         default:
@@ -435,8 +454,9 @@ final class PeekabooSettings {
 
     var allAvailableProviders: [String] {
         let builtIn = ["openai", "anthropic", "grok", "google", "minimax", "minimax-cn", "ollama", "lmstudio"]
-        let custom = Array(customProviders.keys)
-        return builtIn + custom.sorted()
+        let custom = self.customProviders.compactMap { $0.value.enabled ? $0.key : nil }
+        let customIDs = Set(custom.map { $0.lowercased() })
+        return builtIn.filter { !customIDs.contains($0) } + custom.sorted()
     }
 
     // Storage
@@ -463,7 +483,7 @@ extension PeekabooSettings {
     }
 
     private func loadProviderSettings() {
-        self.selectedProvider = Self.canonicalProviderIdentifier(
+        self.selectedProvider = self.canonicalProviderIdentifier(
             self.userDefaults.string(forKey: self.namespaced("selectedProvider")) ?? "anthropic")
         self.openAIAPIKey = self.userDefaults.string(forKey: self.namespaced("openAIAPIKey")) ?? ""
         self.anthropicAPIKey = self.userDefaults.string(forKey: self.namespaced("anthropicAPIKey")) ?? ""
@@ -627,18 +647,23 @@ extension PeekabooSettings {
         // This allows proper environment variable detection in the UI
 
         // Load provider and model from config
-        let selectedProvider = Self.canonicalProviderIdentifier(self.configManager.getSelectedProvider())
+        let selectedProvider = self.canonicalProviderIdentifier(self.configManager.getSelectedProvider())
         if !selectedProvider.isEmpty {
             self.selectedProvider = selectedProvider
         }
 
         // Load agent settings from config
         if let model = configManager.getAgentModel() {
-            let selection = Self.providerQualifiedModelSelection(from: model)
+            let selection = self.providerQualifiedModelSelection(from: model)
             if let provider = selection.provider {
                 self.selectedProvider = provider
             }
             self.selectedModel = selection.model
+        } else if let model = self.firstConfiguredModel(
+            in: self.configManager.getAIProviders(),
+            matching: self.selectedProvider)
+        {
+            self.selectedModel = model
         }
 
         let configTemp = self.configManager.getAgentTemperature()
@@ -704,8 +729,10 @@ extension PeekabooSettings {
                     "ollama/\(self.selectedModel)"
                 case "lmstudio", "lm-studio":
                     "lmstudio/\(self.selectedModel)"
+                case "openrouter":
+                    "openrouter/\(self.selectedModel)"
                 default:
-                    "anthropic/claude-opus-4-7"
+                    "anthropic/claude-opus-4-8"
                 }
 
                 // Set providers string with fallbacks
@@ -726,7 +753,7 @@ extension PeekabooSettings {
         }
     }
 
-    private func updateConfigFile() {
+    private func updateConfigFile(excludingProvider excludedProvider: String? = nil) {
         guard !self.isLoading else { return }
 
         do {
@@ -764,26 +791,35 @@ extension PeekabooSettings {
                     "ollama/\(self.selectedModel)"
                 case "lmstudio", "lm-studio":
                     "lmstudio/\(self.selectedModel)"
+                case "openrouter":
+                    "openrouter/\(self.selectedModel)"
                 default:
                     // Check if it's a custom provider
                     if self.customProviders[self.selectedProvider] != nil {
                         "\(self.selectedProvider)/\(self.selectedModel)"
                     } else {
-                        "anthropic/claude-opus-4-7"
+                        "anthropic/claude-opus-4-8"
                     }
                 }
 
                 // Update providers string
                 if let currentProviders = config.aiProviders?.providers {
-                    // Replace the first provider while keeping fallbacks
+                    // Move the selected provider first while keeping every other fallback.
                     let providers = currentProviders.split(separator: ",")
                         .map { String($0).trimmingCharacters(in: .whitespaces) }
                     var newProviders = [providerString]
 
                     // Add other providers that aren't the same type
-                    for provider in providers.dropFirst() {
+                    for provider in providers {
                         let providerType = provider.split(separator: "/").first.map(String.init) ?? ""
-                        if Self.canonicalProviderIdentifier(providerType) != self.selectedProvider {
+                        if let excludedProvider,
+                           providerType.caseInsensitiveCompare(excludedProvider) == .orderedSame
+                        {
+                            continue
+                        }
+                        if self.canonicalProviderIdentifier(providerType) !=
+                            self.canonicalProviderIdentifier(self.selectedProvider)
+                        {
                             newProviders.append(provider)
                         }
                     }
@@ -851,13 +887,66 @@ extension PeekabooSettings {
         // UI updates automatically with @Observable
     }
 
-    func removeCustomProvider(id: String) throws {
-        try self.configManager.removeCustomProvider(id: id)
-        // If we were using this provider, switch to a built-in one
-        if self.selectedProvider == id {
-            self.selectedProvider = "anthropic"
+    func selectCustomProvider(id: String) {
+        guard let provider = self.getCustomProvider(id: id),
+              provider.enabled,
+              let model = self.configuredModelForCustomProvider(id: id)
+        else { return }
+
+        let wasLoading = self.isLoading
+        self.isLoading = true
+        self.selectedProvider = id
+        self.selectedModel = model
+        self.isLoading = wasLoading
+
+        guard !wasLoading else { return }
+        self.save()
+        self.updateConfigFile()
+        self.services?.refreshAgentService()
+    }
+
+    func replaceCustomProvider(_ provider: Configuration.CustomProvider, id: String) throws {
+        let wasSelected = self.customProviderIdentifier(matching: self.selectedProvider) == id
+        try self.configManager.addCustomProvider(provider, id: id)
+
+        if wasSelected {
+            if let models = provider.models,
+               !models.isEmpty,
+               models[self.selectedModel] == nil,
+               let replacementModel = models.keys.min()
+            {
+                let wasLoading = self.isLoading
+                self.isLoading = true
+                self.selectedModel = replacementModel
+                self.isLoading = wasLoading
+                if !wasLoading {
+                    self.save()
+                }
+            }
         }
-        // UI updates automatically with @Observable
+
+        self.updateConfigFile()
+        self.services?.refreshAgentService()
+    }
+
+    func removeCustomProvider(id: String) throws {
+        let wasSelected = self.selectedProvider.caseInsensitiveCompare(id) == .orderedSame
+        try self.configManager.removeCustomProvider(id: id)
+
+        if wasSelected {
+            let wasLoading = self.isLoading
+            self.isLoading = true
+            self.selectedProvider = "anthropic"
+            self.selectedModel = self.defaultModel(for: "anthropic")
+            self.isLoading = wasLoading
+
+            if !wasLoading {
+                self.save()
+            }
+        }
+
+        self.updateConfigFile(excludingProvider: id)
+        self.services?.refreshAgentService()
     }
 
     func getCustomProvider(id: String) -> Configuration.CustomProvider? {
@@ -918,21 +1007,60 @@ extension PeekabooSettings {
         }
     }
 
+    private func firstConfiguredModel(in providers: String, matching selectedProvider: String) -> String? {
+        let selectedProvider = self.canonicalProviderIdentifier(selectedProvider)
+        for entry in providers.split(separator: ",") {
+            let parts = entry.trimmingCharacters(in: .whitespaces).split(separator: "/", maxSplits: 1)
+            guard parts.count == 2,
+                  self.canonicalProviderIdentifier(String(parts[0])) == selectedProvider
+            else { continue }
+            return String(parts[1])
+        }
+        return nil
+    }
+
+    private func configuredModelForCustomProvider(id: String) -> String? {
+        guard let provider = self.getCustomProvider(id: id), provider.enabled else { return nil }
+
+        if let modelID = provider.models?.keys.min() {
+            return modelID
+        }
+
+        if let configuredDefault = self.configManager.getAgentModel() {
+            let selection = self.providerQualifiedModelSelection(from: configuredDefault)
+            let configuredProvider = selection.provider ??
+                self.canonicalProviderIdentifier(self.configManager.getSelectedProvider())
+            if configuredProvider.caseInsensitiveCompare(id) == .orderedSame, !selection.model.isEmpty {
+                return selection.model
+            }
+        }
+
+        return self.firstConfiguredModel(
+            in: self.configManager.getAIProviders(),
+            matching: id)
+    }
+
     private func environmentCredentialValue(for provider: Provider) -> String? {
         let keys = self.credentialKeys(for: provider)
         return self.detectedEnvironmentVariable(for: keys).flatMap { ProcessInfo.processInfo.environment[$0] }
     }
 
     private func defaultModel(for provider: String) -> String {
-        switch provider {
+        if let customProviderID = self.customProviderIdentifier(matching: provider),
+           self.customProviders[customProviderID] != nil
+        {
+            return self.configuredModelForCustomProvider(id: customProviderID) ?? ""
+        }
+
+        return switch provider {
         case "openai":
             "gpt-5.5"
         case "anthropic":
-            "claude-opus-4-7"
+            "claude-opus-4-8"
         case "grok":
-            "grok-4"
+            "grok-4.3"
         case "google":
-            "gemini-3-flash"
+            "gemini-3.5-flash"
         case "minimax":
             "MiniMax-M2.7"
         case "minimax-cn", "minimax_cn", "minimaxi":
@@ -945,9 +1073,15 @@ extension PeekabooSettings {
     }
 
     private func agentDefaultModel() -> String {
-        switch self.selectedProvider {
+        if let customProviderID = self.customProviderIdentifier(matching: self.selectedProvider) {
+            return "\(customProviderID)/\(self.selectedModel)"
+        }
+
+        return switch self.selectedProvider {
         case "minimax-cn", "minimax_cn", "minimaxi":
             "minimax-cn/\(self.selectedModel)"
+        case "openrouter":
+            "openrouter/\(self.selectedModel)"
         default:
             self.selectedModel
         }
@@ -991,10 +1125,28 @@ extension PeekabooSettings {
         }
     }
 
+    private func canonicalProviderIdentifier(_ provider: String) -> String {
+        if let customProviderID = self.customProviderIdentifier(matching: provider) {
+            return customProviderID
+        }
+        return Self.canonicalProviderIdentifier(provider)
+    }
+
+    private func customProviderIdentifier(matching provider: String) -> String? {
+        let matches = self.customProviders.filter {
+            $0.value.enabled && $0.key.caseInsensitiveCompare(provider) == .orderedSame
+        }
+        return matches.count == 1 ? matches.first?.key : nil
+    }
+
     private static func canonicalProviderIdentifier(_ provider: String) -> String {
         switch provider.lowercased() {
+        case "openai", "anthropic", "minimax", "ollama", "openrouter":
+            provider.lowercased()
         case "gemini", "google":
             "google"
+        case "xai", "grok":
+            "grok"
         case "minimax-cn", "minimax_cn", "minimaxi":
             "minimax-cn"
         case "lm-studio", "lmstudio":
@@ -1004,14 +1156,45 @@ extension PeekabooSettings {
         }
     }
 
-    private static func providerQualifiedModelSelection(from rawModel: String) -> (provider: String?, model: String) {
+    private func providerQualifiedModelSelection(from rawModel: String) -> (provider: String?, model: String) {
         let parts = rawModel.split(separator: "/", maxSplits: 1).map(String.init)
-        guard parts.count == 2,
-              ["minimax-cn", "minimax_cn", "minimaxi"].contains(parts[0].lowercased())
-        else {
+        guard parts.count == 2 else {
             return (nil, rawModel)
         }
-        return (Self.canonicalProviderIdentifier(parts[0]), parts[1])
+
+        if let customProviderID = self.customProviderIdentifier(matching: parts[0]) {
+            return (customProviderID, parts[1])
+        }
+
+        let provider = Self.canonicalProviderIdentifier(parts[0])
+        let configuredProviders = Set(
+            self.configManager.getAIProviders()
+                .split(separator: ",")
+                .compactMap { entry -> String? in
+                    let provider = entry
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .split(separator: "/", maxSplits: 1)
+                        .first
+                        .map(String.init)
+                    return provider.map(self.canonicalProviderIdentifier)
+                })
+        if configuredProviders.contains(provider) ||
+            provider == self.canonicalProviderIdentifier(self.selectedProvider) ||
+            (!self.configManager.hasExplicitAIProviderList() && Self.isKnownProviderIdentifier(provider))
+        {
+            return (provider, parts[1])
+        }
+
+        return (nil, rawModel)
+    }
+
+    private static func isKnownProviderIdentifier(_ provider: String) -> Bool {
+        switch provider {
+        case "openai", "anthropic", "grok", "google", "minimax", "minimax-cn", "ollama", "lmstudio", "openrouter":
+            true
+        default:
+            false
+        }
     }
 
     private static let animationKeys: [String] = [

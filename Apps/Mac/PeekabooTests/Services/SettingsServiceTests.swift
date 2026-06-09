@@ -13,7 +13,7 @@ struct PeekabooSettingsTests {
             let settings = PeekabooSettings()
             #expect(settings.openAIAPIKey.isEmpty)
             #expect(settings.selectedProvider == "anthropic")
-            #expect(settings.selectedModel == "claude-opus-4-7")
+            #expect(settings.selectedModel == "claude-opus-4-8")
             #expect(settings.alwaysOnTop == false)
             #expect(settings.showInDock == true)
             #expect(settings.launchAtLogin == false)
@@ -159,10 +159,10 @@ struct PeekabooSettingsConfigHydrationTests {
             let configJSON = """
             {
               "aiProviders": {
-                "providers": "anthropic/claude-opus-4-7,ollama/llava:latest"
+                "providers": "anthropic/claude-opus-4-8,ollama/llava:latest"
               },
               "agent": {
-                "defaultModel": "claude-opus-4-7",
+                "defaultModel": "claude-opus-4-8",
                 "temperature": 0.3,
                 "maxTokens": 4096
               }
@@ -180,7 +180,7 @@ struct PeekabooSettingsConfigHydrationTests {
             let settings = PeekabooSettings()
 
             #expect(settings.selectedProvider == "anthropic")
-            #expect(settings.selectedModel == "claude-opus-4-7")
+            #expect(settings.selectedModel == "claude-opus-4-8")
             #expect(settings.temperature == 0.3)
             #expect(settings.maxTokens == 4096)
             #expect(settings.agentModeEnabled == true)
@@ -195,6 +195,35 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Configuration-backed provider aliases hydrate to Google and built-ins include Grok and MiniMax`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "gemini/gemini-3.5-flash,ollama/llava:latest"
+              },
+              "agent": {
+                "defaultModel": "gemini-3.5-flash"
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "google")
+            #expect(settings.selectedModel == "gemini-3.5-flash")
+            #expect(settings.allAvailableProviders.contains("google"))
+            #expect(settings.allAvailableProviders.contains("grok"))
+            #expect(settings.allAvailableProviders.contains("minimax"))
+        }
+    }
+
+    @Test
+    func `Configuration-backed supported model IDs remain pinned`() throws {
         try withIsolatedSettingsEnvironment { configDir in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
@@ -216,9 +245,66 @@ struct PeekabooSettingsConfigHydrationTests {
 
             #expect(settings.selectedProvider == "google")
             #expect(settings.selectedModel == "gemini-3-flash")
-            #expect(settings.allAvailableProviders.contains("google"))
-            #expect(settings.allAvailableProviders.contains("grok"))
-            #expect(settings.allAvailableProviders.contains("minimax"))
+
+            let persistedConfig = try String(contentsOf: configPath, encoding: .utf8)
+            #expect(persistedConfig == configJSON)
+        }
+    }
+
+    @Test
+    func `Configuration provider-only supported model remains unchanged`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "google/gemini-3-flash"
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "google")
+            #expect(settings.selectedModel == "gemini-3-flash")
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedConfig = String(decoding: persistedData, as: UTF8.self)
+            #expect(persistedConfig == configJSON)
+        }
+    }
+
+    @Test
+    func `Configuration provider model wins over legacy UserDefaults without rewriting config`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "openai/gpt-5.5,anthropic/claude-opus-4-8"
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            let defaults = UserDefaults.standard
+            defaults.set("anthropic", forKey: "peekaboo.selectedProvider")
+            defaults.set("claude-opus-4-7", forKey: "peekaboo.selectedModel")
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "openai")
+            #expect(settings.selectedModel == "gpt-5.5")
+
+            let persistedConfig = try String(contentsOf: configPath, encoding: .utf8)
+            #expect(persistedConfig == configJSON)
         }
     }
 
@@ -275,6 +361,806 @@ struct PeekabooSettingsConfigHydrationTests {
             #expect(settings.selectedProvider == "minimax")
             #expect(settings.selectedModel == "MiniMax-M2.7")
             #expect(settings.hasValidAPIKey)
+        }
+    }
+
+    @Test
+    func `Standalone qualified default hydrates its provider`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "agent": {
+                "defaultModel": "minimax-cn/MiniMax-M2.7"
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "minimax-cn")
+            #expect(settings.selectedModel == "MiniMax-M2.7")
+
+            settings.temperature = 0.5
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "minimax-cn/MiniMax-M2.7")
+        }
+    }
+
+    @Test
+    func `Custom provider settings persist qualified agent default`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let settings = PeekabooSettings()
+            try settings.addCustomProvider(
+                Configuration.CustomProvider(
+                    name: "Local Proxy",
+                    type: .openai,
+                    options: Configuration.ProviderOptions(
+                        baseURL: "http://localhost:8317/v1",
+                        apiKey: "test-key"),
+                    models: [
+                        "mini": Configuration.ModelDefinition(
+                            name: "gpt-5.4-mini",
+                            supportsTools: true),
+                    ]),
+                id: "local-proxy")
+
+            settings.selectedProvider = "local-proxy"
+            settings.selectedModel = "mini"
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            let aiProviders = try #require(persistedJSON["aiProviders"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "local-proxy/mini")
+            #expect(aiProviders["providers"] as? String == "local-proxy/mini,ollama/llava:latest")
+        }
+    }
+
+    @Test
+    func `Replacing selected custom provider preserves selection and default`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let settings = PeekabooSettings()
+            let original = Configuration.CustomProvider(
+                name: "Local Proxy",
+                type: .openai,
+                options: Configuration.ProviderOptions(
+                    baseURL: "http://localhost:8317/v1",
+                    apiKey: "test-key"))
+            try settings.addCustomProvider(original, id: "local-proxy")
+            settings.selectedProvider = "local-proxy"
+            settings.selectedModel = "mini"
+
+            let replacement = Configuration.CustomProvider(
+                name: "Local Proxy",
+                type: .openai,
+                options: Configuration.ProviderOptions(
+                    baseURL: "http://localhost:9417/v1",
+                    apiKey: "replacement-key"))
+            try settings.replaceCustomProvider(replacement, id: "local-proxy")
+
+            #expect(settings.selectedProvider == "local-proxy")
+            #expect(settings.selectedModel == "mini")
+            #expect(settings.getCustomProvider(id: "local-proxy")?.options.baseURL == "http://localhost:9417/v1")
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "local-proxy/mini")
+        }
+    }
+
+    @Test
+    func `Replacing selected custom provider retargets a removed model`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let settings = PeekabooSettings()
+            let original = Configuration.CustomProvider(
+                name: "Local Proxy",
+                type: .openai,
+                options: Configuration.ProviderOptions(
+                    baseURL: "http://localhost:8317/v1",
+                    apiKey: "test-key"),
+                models: [
+                    "old-model": Configuration.ModelDefinition(name: "Old Model"),
+                ])
+            try settings.addCustomProvider(original, id: "local-proxy")
+            settings.selectCustomProvider(id: "local-proxy")
+
+            let replacement = Configuration.CustomProvider(
+                name: "Local Proxy",
+                type: .openai,
+                options: original.options,
+                models: [
+                    "new-model": Configuration.ModelDefinition(name: "New Model"),
+                ])
+            try settings.replaceCustomProvider(replacement, id: "local-proxy")
+
+            #expect(settings.selectedProvider == "local-proxy")
+            #expect(settings.selectedModel == "new-model")
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "local-proxy/new-model")
+        }
+    }
+
+    @Test
+    func `Selecting custom provider also selects its configured model`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let settings = PeekabooSettings()
+            try settings.addCustomProvider(
+                Configuration.CustomProvider(
+                    name: "Local Proxy",
+                    type: .openai,
+                    options: Configuration.ProviderOptions(
+                        baseURL: "http://localhost:8317/v1",
+                        apiKey: "test-key"),
+                    models: [
+                        "mini": Configuration.ModelDefinition(
+                            name: "gpt-5.5-mini",
+                            supportsTools: true),
+                    ]),
+                id: "local-proxy")
+
+            settings.selectedProvider = "anthropic"
+            settings.selectedModel = "claude-opus-4-8"
+            settings.selectCustomProvider(id: "local-proxy")
+
+            #expect(settings.selectedProvider == "local-proxy")
+            #expect(settings.selectedModel == "mini")
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "local-proxy/mini")
+        }
+    }
+
+    @Test
+    func `Selecting catalog-less custom provider does not invent a model`() throws {
+        try withIsolatedSettingsEnvironment { _ in
+            let settings = PeekabooSettings()
+            try settings.addCustomProvider(
+                Configuration.CustomProvider(
+                    name: "Groq",
+                    type: .openai,
+                    options: Configuration.ProviderOptions(
+                        baseURL: "https://api.groq.com/openai/v1",
+                        apiKey: "test-key")),
+                id: "groq-custom")
+
+            settings.selectedProvider = "anthropic"
+            settings.selectedModel = "claude-opus-4-8"
+            settings.selectCustomProvider(id: "groq-custom")
+
+            #expect(settings.selectedProvider == "anthropic")
+            #expect(settings.selectedModel == "claude-opus-4-8")
+        }
+    }
+
+    @Test
+    func `Editing custom provider preserves discovered models and advanced options`() {
+        let original = Configuration.CustomProvider(
+            name: "Local Proxy",
+            type: .openai,
+            options: Configuration.ProviderOptions(
+                baseURL: "http://localhost:8317/v1",
+                apiKey: "test-key",
+                timeout: 45,
+                retryAttempts: 4,
+                defaultParameters: ["temperature": "0.2"]),
+            models: [
+                "mini": Configuration.ModelDefinition(
+                    name: "gpt-5.5-mini",
+                    supportsTools: false,
+                    supportsVision: false),
+            ],
+            enabled: false)
+
+        let edited = Configuration.CustomProvider(
+            name: "Updated Proxy",
+            description: "Updated",
+            type: .anthropic,
+            options: Configuration.ProviderOptions(
+                baseURL: "http://localhost:9417/v1",
+                apiKey: "replacement-key",
+                headers: ["X-Test": "value"]))
+        let updated = EditCustomProviderView.preservingMetadata(from: original, in: edited)
+
+        #expect(updated.name == "Updated Proxy")
+        #expect(updated.options.baseURL == "http://localhost:9417/v1")
+        #expect(updated.options.timeout == 45)
+        #expect(updated.options.retryAttempts == 4)
+        #expect(updated.options.defaultParameters == ["temperature": "0.2"])
+        #expect(updated.models?["mini"]?.supportsTools == false)
+        #expect(updated.models?["mini"]?.supportsVision == false)
+        #expect(!updated.enabled)
+    }
+
+    @Test
+    func `Editing custom provider can add model identifiers`() {
+        let original = Configuration.CustomProvider(
+            name: "Groq",
+            type: .openai,
+            options: Configuration.ProviderOptions(
+                baseURL: "https://api.groq.com/openai/v1",
+                apiKey: "test-key"))
+        let edited = Configuration.CustomProvider(
+            name: "Groq",
+            type: .openai,
+            options: original.options,
+            models: [
+                "llama-model": Configuration.ModelDefinition(name: "llama-model"),
+            ])
+
+        let updated = EditCustomProviderView.preservingMetadata(from: original, in: edited)
+
+        #expect(updated.models?.keys.sorted() == ["llama-model"])
+    }
+
+    @Test
+    func `Editing catalog-less provider preserves absent model catalog`() {
+        let original = Configuration.CustomProvider(
+            name: "Local Proxy",
+            type: .openai,
+            options: Configuration.ProviderOptions(
+                baseURL: "http://localhost:8317/v1",
+                apiKey: "test-key"))
+
+        #expect(EditCustomProviderView.canSaveModels([], originalProvider: original))
+        #expect(EditCustomProviderView.editedModels(modelIdentifiers: [], originalProvider: original) == nil)
+    }
+
+    @Test
+    func `Custom provider settings hydrate qualified agent default`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "local-proxy/mini,ollama/llava:latest"
+              },
+              "agent": {
+                "defaultModel": "local-proxy/mini"
+              },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.4-mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "local-proxy")
+            #expect(settings.selectedModel == "mini")
+
+            settings.temperature = 0.5
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            let aiProviders = try #require(persistedJSON["aiProviders"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "local-proxy/mini")
+            #expect(aiProviders["providers"] as? String == "local-proxy/mini,ollama/llava:latest")
+        }
+    }
+
+    @Test
+    func `Custom provider alias shadows xAI during provider-only hydration`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "xai/old,xai/mini"
+              },
+              "customProviders": {
+                "xai": {
+                  "name": "Custom xAI Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "old": {
+                      "name": "Proxy Old",
+                      "supportsTools": true
+                    },
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "xai")
+            #expect(settings.selectedModel == "old")
+
+            settings.selectedModel = "mini"
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            let aiProviders = try #require(persistedJSON["aiProviders"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "xai/mini")
+            #expect(aiProviders["providers"] as? String == "xai/mini,ollama/llava:latest")
+        }
+    }
+
+    @Test
+    func `Qualified custom defaults resolve case-insensitively`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "OpenRouter/mini"
+              },
+              "agent": {
+                "defaultModel": "openrouter/mini"
+              },
+              "customProviders": {
+                "OpenRouter": {
+                  "name": "Custom OpenRouter",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "OpenRouter")
+            #expect(settings.selectedModel == "mini")
+
+            settings.temperature = 0.5
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            let aiProviders = try #require(persistedJSON["aiProviders"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "OpenRouter/mini")
+            #expect(aiProviders["providers"] as? String == "OpenRouter/mini,ollama/llava:latest")
+        }
+    }
+
+    @Test
+    func `OpenRouter nested model IDs retain OpenRouter routing`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "openrouter/anthropic/claude-sonnet-4.6,ollama/llava:latest"
+              },
+              "agent": {
+                "defaultModel": "openrouter/anthropic/claude-sonnet-4.6"
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "openrouter")
+            #expect(settings.selectedModel == "anthropic/claude-sonnet-4.6")
+
+            settings.temperature = 0.5
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            let aiProviders = try #require(persistedJSON["aiProviders"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "openrouter/anthropic/claude-sonnet-4.6")
+            #expect(
+                aiProviders["providers"] as? String ==
+                    "openrouter/anthropic/claude-sonnet-4.6,ollama/llava:latest")
+        }
+    }
+
+    @Test
+    func `Hydrated OpenRouter model remains available in model picker`() {
+        let modelGroups = AISettingsView.appendingSelectedOpenRouterModel(
+            to: [("openai", [(id: "gpt-5.5", name: "GPT-5.5")])],
+            selectedProvider: "openrouter",
+            selectedModel: "anthropic/claude-sonnet-4.6",
+            customProviderIDs: [])
+
+        #expect(modelGroups.contains { group in
+            group.provider == "openrouter" &&
+                group.models.contains { $0.id == "anthropic/claude-sonnet-4.6" }
+        })
+    }
+
+    @Test
+    func `Qualified default selects a later configured provider`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "openai/gpt-5.5,openrouter/anthropic/claude-sonnet-4.6"
+              },
+              "agent": {
+                "defaultModel": "openrouter/anthropic/claude-sonnet-4.6"
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "openrouter")
+            #expect(settings.selectedModel == "anthropic/claude-sonnet-4.6")
+
+            settings.temperature = 0.5
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            let aiProviders = try #require(persistedJSON["aiProviders"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "openrouter/anthropic/claude-sonnet-4.6")
+            #expect(
+                aiProviders["providers"] as? String ==
+                    "openrouter/anthropic/claude-sonnet-4.6,openai/gpt-5.5")
+        }
+    }
+
+    @Test
+    func `Exact built-in custom provider shadows built-in settings entry`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "grok/mini"
+              },
+              "customProviders": {
+                "grok": {
+                  "name": "Custom Grok Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-custom-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.allAvailableProviders.count(where: { $0 == "grok" }) == 1)
+            #expect(settings.selectedProvider == "grok")
+            #expect(settings.selectedModel == "mini")
+            #expect(settings.hasValidAPIKey)
+
+            settings.temperature = 0.5
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "grok/mini")
+        }
+    }
+
+    @Test
+    func `Disabled custom provider does not shadow built-in settings entry`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "grok/grok-4.3"
+              },
+              "customProviders": {
+                "grok": {
+                  "name": "Disabled Grok Proxy",
+                  "type": "openai",
+                  "enabled": false,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-custom-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.allAvailableProviders.count(where: { $0 == "grok" }) == 1)
+            #expect(settings.selectedProvider == "grok")
+            #expect(settings.selectedModel == "grok-4.3")
+        }
+    }
+
+    @Test
+    func `Configuration-backed xAI provider alias hydrates to Grok`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let previousXAIKey = getenv("X_AI_API_KEY").map { String(cString: $0) }
+            setenv("X_AI_API_KEY", "test-xai-key", 1)
+            defer {
+                if let previousXAIKey {
+                    setenv("X_AI_API_KEY", previousXAIKey, 1)
+                } else {
+                    unsetenv("X_AI_API_KEY")
+                }
+            }
+
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "xai/grok-4.3"
+              },
+              "agent": {
+                "defaultModel": "xai/grok-4.3"
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "grok")
+            #expect(settings.selectedModel == "grok-4.3")
+            #expect(settings.hasValidAPIKey)
+        }
+    }
+
+    @Test
+    func `Configuration-backed qualified supported aliases remain unchanged`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "xai/grok-4"
+              },
+              "agent": {
+                "defaultModel": "xai/grok-4"
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "grok")
+            #expect(settings.selectedModel == "grok-4")
+
+            let persistedData = try Data(contentsOf: configPath)
+            #expect(String(decoding: persistedData, as: UTF8.self) == configJSON)
+        }
+    }
+}
+
+extension PeekabooSettingsConfigHydrationTests {
+    @Test
+    func `Removing selected custom provider resets provider and model atomically`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let settings = PeekabooSettings()
+            try settings.addCustomProvider(
+                Configuration.CustomProvider(
+                    name: "Local Proxy",
+                    type: .openai,
+                    options: Configuration.ProviderOptions(
+                        baseURL: "http://localhost:8317/v1",
+                        apiKey: "test-key"),
+                    models: [
+                        "mini": Configuration.ModelDefinition(
+                            name: "Proxy Mini",
+                            supportsTools: true),
+                    ]),
+                id: "local-proxy")
+            settings.selectCustomProvider(id: "local-proxy")
+
+            try settings.removeCustomProvider(id: "local-proxy")
+
+            #expect(settings.selectedProvider == "anthropic")
+            #expect(settings.selectedModel == "claude-opus-4-8")
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            let aiProviders = try #require(persistedJSON["aiProviders"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "claude-opus-4-8")
+            #expect(
+                aiProviders["providers"] as? String ==
+                    "anthropic/claude-opus-4-8,ollama/llava:latest")
+        }
+    }
+
+    @Test
+    func `Mixed-case built-in provider IDs normalize before persistence`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let previousOpenAIKey = getenv("OPENAI_API_KEY").map { String(cString: $0) }
+            setenv("OPENAI_API_KEY", "test-openai-key", 1)
+            defer {
+                if let previousOpenAIKey {
+                    setenv("OPENAI_API_KEY", previousOpenAIKey, 1)
+                } else {
+                    unsetenv("OPENAI_API_KEY")
+                }
+            }
+
+            let configPath = configDir.appendingPathComponent("config.json")
+            try """
+            {
+              "aiProviders": {
+                "providers": "OpenAI/gpt-5.5,ollama/llava:latest"
+              },
+              "agent": {
+                "defaultModel": "OpenAI/gpt-5.5"
+              }
+            }
+            """.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings()
+
+            #expect(settings.selectedProvider == "openai")
+            #expect(settings.selectedModel == "gpt-5.5")
+            #expect(settings.hasValidAPIKey)
+
+            settings.temperature = 0.5
+
+            let persistedData = try Data(contentsOf: configPath)
+            let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
+            let agent = try #require(persistedJSON["agent"] as? [String: Any])
+            let aiProviders = try #require(persistedJSON["aiProviders"] as? [String: Any])
+            #expect(agent["defaultModel"] as? String == "gpt-5.5")
+            #expect(aiProviders["providers"] as? String == "openai/gpt-5.5,ollama/llava:latest")
+        }
+    }
+
+    @Test
+    func `Replacing fallback custom provider refreshes active agent`() throws {
+        try withIsolatedSettingsEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """.write(to: configPath, atomically: true, encoding: .utf8)
+
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let services = PeekabooServices()
+            let originalAgent = try #require(services.agent as? PeekabooAgentService)
+            #expect(originalAgent.defaultModelSelection == "local-proxy/mini")
+
+            let settings = PeekabooSettings()
+            settings.selectedProvider = "openai"
+            settings.selectedModel = "gpt-5.5"
+            settings.connectServices(services)
+
+            let replacement = Configuration.CustomProvider(
+                name: "Local Proxy",
+                type: .openai,
+                options: Configuration.ProviderOptions(
+                    baseURL: "http://localhost:9417/v1",
+                    apiKey: "replacement-key"),
+                models: [
+                    "mini": Configuration.ModelDefinition(
+                        name: "Proxy Mini",
+                        supportsTools: true),
+                ])
+            try settings.replaceCustomProvider(replacement, id: "local-proxy")
+
+            let refreshedAgent = try #require(services.agent as? PeekabooAgentService)
+            #expect(ObjectIdentifier(refreshedAgent) != ObjectIdentifier(originalAgent))
+            #expect(refreshedAgent.defaultModelSelection == "local-proxy/mini")
         }
     }
 }

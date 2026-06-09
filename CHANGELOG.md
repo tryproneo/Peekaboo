@@ -2,6 +2,9 @@
 
 ## [3.4.1] - Unreleased
 
+### Fixed
+- `peekaboo agent` now resolves saved custom providers, xAI/Grok, Gemini 3.5 Flash, Claude Opus 4.8, and GPT-5.5 model selections before falling back to unavailable built-in defaults. Thanks @udiedrichsen for #182.
+
 ## [3.4.0] - 2026-06-07
 
 ### Added

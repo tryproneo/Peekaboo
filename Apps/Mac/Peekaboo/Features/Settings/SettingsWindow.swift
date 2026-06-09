@@ -242,14 +242,18 @@ struct AISettingsView: View {
                 ("gpt-5-mini", "GPT-5 mini"),
             ]),
             ("anthropic", [
+                ("claude-opus-4-8", "Claude Opus 4.8"),
                 ("claude-opus-4-7", "Claude Opus 4.7"),
+                ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
                 ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
                 ("claude-haiku-4.5", "Claude Haiku 4.5"),
             ]),
             ("grok", [
                 ("grok-4.3", "Grok 4.3"),
+                ("grok-4", "Grok 4"),
             ]),
             ("google", [
+                ("gemini-3.5-flash", "Gemini 3.5 Flash"),
                 ("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
                 ("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite"),
                 ("gemini-3-flash", "Gemini 3 Flash"),
@@ -269,14 +273,49 @@ struct AISettingsView: View {
             ]),
         ]
 
+        let enabledCustomProviders = self.settings.customProviders.filter(\.value.enabled)
+        let customProviderIDs = Set(enabledCustomProviders.keys.map { $0.lowercased() })
+        models.removeAll { customProviderIDs.contains($0.provider.lowercased()) }
+
         // Add custom providers
-        for (id, provider) in self.settings.customProviders.sorted(by: { $0.key < $1.key }) {
-            let providerModels = provider.models?.map { (id: $0.key, name: $0.value.name) } ?? [
-                (id: "custom-model", name: "Default Model"),
-            ]
-            models.append((id, providerModels))
+        for (id, provider) in enabledCustomProviders.sorted(by: { $0.key < $1.key }) {
+            var providerModels = provider.models?.map { (id: $0.key, name: $0.value.name) } ?? []
+            if providerModels.isEmpty,
+               self.settings.selectedProvider.caseInsensitiveCompare(id) == .orderedSame,
+               !self.settings.selectedModel.isEmpty
+            {
+                providerModels = [(id: self.settings.selectedModel, name: self.settings.selectedModel)]
+            }
+            if !providerModels.isEmpty {
+                models.append((id, providerModels))
+            }
         }
 
+        return Self.appendingSelectedOpenRouterModel(
+            to: models,
+            selectedProvider: self.settings.selectedProvider,
+            selectedModel: self.settings.selectedModel,
+            customProviderIDs: customProviderIDs)
+    }
+
+    static func appendingSelectedOpenRouterModel(
+        to models: [(provider: String, models: [(id: String, name: String)])],
+        selectedProvider: String,
+        selectedModel: String,
+        customProviderIDs: Set<String>) -> [(provider: String, models: [(id: String, name: String)])]
+    {
+        guard selectedProvider.caseInsensitiveCompare("openrouter") == .orderedSame,
+              !selectedModel.isEmpty,
+              !customProviderIDs.contains("openrouter"),
+              !models.contains(where: { group in
+                  group.provider == selectedProvider && group.models.contains(where: { $0.id == selectedModel })
+              })
+        else {
+            return models
+        }
+
+        var models = models
+        models.append((selectedProvider, [(id: selectedModel, name: selectedModel)]))
         return models
     }
 
@@ -296,16 +335,16 @@ struct AISettingsView: View {
             "gpt-5-mini": "Cost-optimized GPT-5 Mini with the same tools + 400K context " +
                 "at a friendlier price.",
             // Anthropic models
-            "claude-opus-4-7": "Claude Opus 4.7 with 1M context for long-running " +
+            "claude-opus-4-8": "Claude Opus 4.8 with 1M context for long-running " +
                 "automation and computer-use tasks.",
-            "claude-sonnet-4-5-20250929": "Claude Sonnet 4.5 with new tools + computer use, " +
+            "claude-sonnet-4-6": "Claude Sonnet 4.6 with new tools + computer use, " +
                 "tuned for long-running automation tasks.",
             "claude-haiku-4.5": "Claude Haiku 4.5 for ultra-low latency assistant tasks with " +
                 "the updated reasoning stack.",
             "grok-4.3": "xAI's latest Grok model for reasoning-heavy automation tasks.",
+            "gemini-3.5-flash": "Google Gemini 3.5 Flash for fast multimodal agent runs.",
             "gemini-3.1-pro-preview": "Google Gemini 3.1 Pro Preview for multimodal agent runs.",
             "gemini-3.1-flash-lite": "Google Gemini 3.1 Flash Lite for low-latency agent runs.",
-            "gemini-3-flash": "Google Gemini Flash tuned for fast, lower-latency multimodal agent runs.",
             "MiniMax-M2.7": "MiniMax M2.7 using the Anthropic-compatible API.",
             "MiniMax-M2.7-highspeed": "MiniMax M2.7 Highspeed using the Anthropic-compatible API.",
             "minimax-cn/MiniMax-M2.7": "MiniMax China M2.7 using the Anthropic-compatible API.",

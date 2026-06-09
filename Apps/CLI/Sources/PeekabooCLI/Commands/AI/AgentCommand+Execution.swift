@@ -9,27 +9,22 @@ import TauTUI
 @available(macOS 14.0, *)
 extension AgentCommand {
     func ensureAgentHasCredentials(
-        _ peekabooAgent: PeekabooAgentService,
-        requestedModel: LanguageModel?
-    ) async -> Bool {
-        if let requestedModel {
-            if self.hasCredentials(for: requestedModel) {
-                return true
-            }
-
-            let providerName = self.providerDisplayName(for: requestedModel)
-            let envVar = self.providerEnvironmentVariable(for: requestedModel)
-            self.printAgentExecutionError(
-                "Missing API key for \(providerName). Set \(envVar) and retry."
-            )
-            return false
+        selectedModel: LanguageModel
+    ) -> Bool {
+        if self.isLocalModel(selectedModel) {
+            return true
         }
 
-        let hasCredential = await peekabooAgent.maskedApiKey != nil
-        if !hasCredential {
-            self.emitAgentUnavailableMessage()
+        if self.hasCredentials(for: selectedModel) {
+            return true
         }
-        return hasCredential
+
+        let providerName = self.providerDisplayName(for: selectedModel)
+        let envVar = self.providerEnvironmentVariable(for: selectedModel)
+        self.printAgentExecutionError(
+            "Missing API key for \(providerName). Set \(envVar) and retry."
+        )
+        return false
     }
 
     /// Render the agent execution result using either JSON output or a rich CLI transcript.

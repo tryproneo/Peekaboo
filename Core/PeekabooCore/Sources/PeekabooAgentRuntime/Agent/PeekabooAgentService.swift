@@ -54,6 +54,32 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         self.defaultLanguageModel.description
     }
 
+    /// Credential-free provider-qualified reference for callers that need to resolve the default model.
+    public var defaultModelSelection: String {
+        switch self.defaultLanguageModel {
+        case let .openai(model): "openai/\(model.modelId)"
+        case let .anthropic(model): "anthropic/\(model.modelId)"
+        case let .google(model): "google/\(model.userFacingModelId)"
+        case let .mistral(model): "mistral/\(model.rawValue)"
+        case let .groq(model): "groq/\(model.rawValue)"
+        case let .grok(model): "grok/\(model.modelId)"
+        case let .ollama(model): "ollama/\(model.modelId)"
+        case let .lmstudio(model): "lmstudio/\(model.modelId)"
+        case let .minimax(model): "minimax/\(model.modelId)"
+        case let .minimaxCN(model): "minimax-cn/\(model.modelId)"
+        case let .openRouter(modelID): "openrouter/\(modelID)"
+        case let .together(modelID): "together/\(modelID)"
+        case let .replicate(modelID): "replicate/\(modelID)"
+        case let .custom(provider): provider.modelId
+        case .azureOpenAI, .openaiCompatible, .anthropicCompatible:
+            self.defaultLanguageModel.description
+        }
+    }
+
+    public func resolveConfiguredModel(_ selection: String) -> LanguageModel? {
+        PeekabooAIService(configuration: self.services.configuration).resolveConfiguredModel(selection)
+    }
+
     /// Get the masked API key for the current model
     public var maskedApiKey: String? {
         get async {
@@ -93,8 +119,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                 config.getAPIKey(for: .custom("replicate"))
             case .openaiCompatible, .anthropicCompatible:
                 nil // Custom endpoints may have keys embedded
-            case .custom:
-                nil // Custom providers handle their own keys
+            case let .custom(provider):
+                provider.apiKey
             }
 
             // Mask the API key
@@ -121,7 +147,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
 
     public init(
         services: any PeekabooServiceProviding,
-        defaultModel: LanguageModel = .anthropic(.opus47))
+        defaultModel: LanguageModel = .anthropic(.opus48))
         throws
     {
         self.services = services

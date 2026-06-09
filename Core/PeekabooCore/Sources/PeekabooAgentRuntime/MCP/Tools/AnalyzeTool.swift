@@ -185,7 +185,7 @@ public struct AnalyzeTool: MCPTool {
             }
             return .openai(.custom(model))
         case "anthropic":
-            guard let model else { return .anthropic(.opus47) }
+            guard let model else { return .anthropic(.opus48) }
             if Self.isUnsupportedLegacyModel(provider: provider, model: model) {
                 throw PeekabooError.invalidInput("Unsupported Anthropic model: \(model)")
             }
@@ -227,10 +227,9 @@ public struct AnalyzeTool: MCPTool {
         }
 
         if provider == "grok" || provider == "xai",
-           normalized.hasPrefix("grok-2") || normalized.hasPrefix("grok-3") ||
-           normalized == "grok-4-0709" || normalized.hasPrefix("grok-4-fast") ||
-           normalized.hasPrefix("grok-code-fast") || normalized.contains("grok-beta") ||
-           normalized.contains("grok-vision-beta")
+           normalized.contains("grok-4.20-multi-agent") ||
+           normalized.contains("grok-4-20-multi-agent") ||
+           compact.contains("grok420multiagent")
         {
             return true
         }

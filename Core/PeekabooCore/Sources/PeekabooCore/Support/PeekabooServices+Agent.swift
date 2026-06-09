@@ -16,6 +16,13 @@ extension PeekabooServices {
         self.configuration.applyAIProviderKeys()
 
         let providers = self.configuration.getAIProviders()
+        let agentConfig = self.configuration.getConfiguration()
+        let aiService = PeekabooAIService(configuration: self.configuration)
+        let configuredCustomDefaultModel = Self.configuredCustomDefaultModel(
+            agentConfig?.agent?.defaultModel,
+            providers: providers,
+            aiService: aiService)
+        let configuredDefault = configuredCustomDefaultModel?.modelId ?? agentConfig?.agent?.defaultModel
 
         // Check for available providers (API key or OAuth access token)
         let hasOpenAI = self.configuration.hasOpenAIAuth()
@@ -26,14 +33,24 @@ extension PeekabooServices {
         let hasMiniMaxChinaSpecific = self.configuration.getMiniMaxChinaAPIKey(fallbackToSharedKey: false)?
             .isEmpty == false
         let hasOpenRouter = self.configuration.getOpenRouterAPIKey()?.isEmpty == false
+        let hasGrok = self.configuration.getGrokAPIKey()?.isEmpty == false
         let hasOllama = Self.providerList(providers, containsToolCapableLocalProvider: "ollama")
         let hasLMStudio = Self.providerList(providers, containsToolCapableLocalProvider: "lmstudio") ||
             Self.providerList(providers, containsToolCapableLocalProvider: "lm-studio")
+        let customDefaultModel = configuredCustomDefaultModel ?? aiService
+            .availableModels()
+            .compactMap { model -> LanguageModel? in
+                if case .custom = model, model.supportsTools, aiService.isModelAvailable(model) {
+                    return model
+                }
+                return nil
+            }
+            .first
+        let hasCustomProvider = customDefaultModel != nil
 
-        if hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasMiniMaxChina || hasOpenRouter || hasOllama ||
-            hasLMStudio
+        if hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasMiniMaxChina || hasOpenRouter || hasGrok ||
+            hasOllama || hasLMStudio || hasCustomProvider
         {
-            let agentConfig = self.configuration.getConfiguration()
             let environmentProviders = EnvironmentVariables.value(for: "PEEKABOO_AI_PROVIDERS")?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let hasEnvironmentProviders = environmentProviders?.isEmpty == false
@@ -47,12 +64,15 @@ extension PeekabooServices {
                 hasMiniMaxChina: hasMiniMaxChina,
                 hasMiniMaxChinaSpecific: hasMiniMaxChinaSpecific,
                 hasOpenRouter: hasOpenRouter,
+                hasGrok: hasGrok,
                 hasOllama: hasOllama,
                 hasLMStudio: hasLMStudio,
-                configuredDefault: agentConfig?.agent?.defaultModel,
+                customDefaultModel: customDefaultModel,
+                configuredDefault: configuredDefault,
+                aiService: aiService,
                 isProviderListExplicit: Self.isExplicitProviderList(
                     providers,
-                    configuredDefault: agentConfig?.agent?.defaultModel,
+                    configuredDefault: configuredDefault,
                     isEnvironmentProvided: hasEnvironmentProviders,
                     hasConfiguredProviderList: agentConfig?.aiProviders?.providers?
                         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -77,7 +97,8 @@ extension PeekabooServices {
                         """)
                     return
                 }
-                let languageModel = Self.parseModelStringForAgent(model)
+                let languageModel = determination.resolvedModel ??
+                    Self.parseModelStringForAgent(model, configuration: self.configuration)
                 self.agent = try PeekabooAgentService(
                     services: self,
                     defaultModel: languageModel)
@@ -96,9 +117,50 @@ extension PeekabooServices {
         }
     }
 
+    private static func configuredCustomDefaultModel(
+        _ configuredDefault: String?,
+        providers: String,
+        aiService: PeekabooAIService) -> LanguageModel?
+    {
+        guard let configuredDefault = configuredDefault?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !configuredDefault.isEmpty
+        else {
+            return nil
+        }
+
+        let providerCandidates = providers
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { entry in
+                guard let model = entry.split(separator: "/", maxSplits: 1).last.map(String.init) else {
+                    return false
+                }
+                return model == configuredDefault || entry == configuredDefault
+            }
+
+        for candidate in [configuredDefault] + providerCandidates {
+            guard let model = aiService.resolveConfiguredModel(candidate),
+                  case .custom = model,
+                  model.supportsTools,
+                  aiService.isModelAvailable(model)
+            else {
+                continue
+            }
+            return model
+        }
+
+        return nil
+    }
+
     /// Parse model string to LanguageModel enum.
-    private static func parseModelStringForAgent(_ modelString: String) -> LanguageModel {
-        LanguageModel.parse(from: modelString) ?? .openai(.gpt55)
+    @MainActor
+    private static func parseModelStringForAgent(_ modelString: String, configuration: ConfigurationManager)
+        -> LanguageModel
+    {
+        if let configuredModel = PeekabooAIService(configuration: configuration).resolveConfiguredModel(modelString) {
+            return configuredModel
+        }
+        return LanguageModel.parse(from: modelString) ?? .openai(.gpt55)
     }
 
     private static func logModelConflict(_ determination: ModelDetermination, logger: SystemLogger) {
@@ -117,43 +179,71 @@ extension PeekabooServices {
     }
 
     private func determineDefaultModelWithConflict(_ sources: ModelSources) -> ModelDetermination {
-        let environmentModel = self.firstAvailableModel(in: sources)
+        let providerListModel = self.firstAvailableModel(in: sources)
+        let environmentModel = sources.isEnvironmentProvided ? providerListModel : nil
 
         let hasConflict = sources.isEnvironmentProvided
             && sources.configuredDefault != nil
             && environmentModel != nil
             && !Self.modelSelectionsMatch(sources.configuredDefault, environmentModel)
 
-        let model: String? = if let environmentModel {
-            environmentModel
+        let model: String?
+        let resolvedModel: LanguageModel?
+        if let environmentModel {
+            model = environmentModel
+            resolvedModel = nil
         } else if sources.isProviderListExplicit {
-            nil
+            model = providerListModel
+            resolvedModel = nil
         } else if let configuredDefault = sources.configuredDefault,
                   Self.isConfiguredDefaultAvailable(configuredDefault, sources: sources)
         {
-            configuredDefault
+            model = configuredDefault
+            resolvedModel = nil
+        } else if let providerListModel {
+            model = providerListModel
+            resolvedModel = nil
+        } else if !sources.isProviderListExplicit, self.hasUnavailableCustomProviderSelection(in: sources) {
+            model = nil
+            resolvedModel = nil
         } else if sources.hasAnthropic {
-            "claude-opus-4-7"
+            model = "claude-opus-4-8"
+            resolvedModel = nil
         } else if sources.hasOpenAI {
-            "gpt-5.5"
+            model = "gpt-5.5"
+            resolvedModel = nil
         } else if sources.hasGemini {
-            "gemini-3-flash"
+            model = "gemini-3.5-flash"
+            resolvedModel = nil
+        } else if sources.hasGrok {
+            model = "grok-4.3"
+            resolvedModel = nil
         } else if sources.hasMiniMaxChinaSpecific {
-            "minimax-cn/MiniMax-M2.7"
+            model = "minimax-cn/MiniMax-M2.7"
+            resolvedModel = nil
         } else if sources.hasMiniMax {
-            "minimax/MiniMax-M2.7"
+            model = "minimax/MiniMax-M2.7"
+            resolvedModel = nil
         } else if sources.hasOpenRouter {
-            "openrouter/openai/gpt-oss-120b"
+            model = "openrouter/openai/gpt-oss-120b"
+            resolvedModel = nil
         } else if sources.hasOllama {
-            "ollama/llama3.3"
+            model = "ollama/llama3.3"
+            resolvedModel = nil
         } else if sources.hasLMStudio {
-            "lmstudio/openai/gpt-oss-120b"
+            model = "lmstudio/openai/gpt-oss-120b"
+            resolvedModel = nil
+        } else if let customDefaultModel = sources.customDefaultModel {
+            model = customDefaultModel.description
+            resolvedModel = customDefaultModel
         } else {
-            "gpt-5.5"
+            model = "gpt-5.5"
+            resolvedModel = nil
         }
 
         return ModelDetermination(
             model: model,
+            resolvedModel: resolvedModel,
             hasConflict: hasConflict,
             configModel: sources.configuredDefault,
             environmentModel: environmentModel)
@@ -165,8 +255,21 @@ extension PeekabooServices {
             .lazy
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .compactMap { rawProvider in
+                if let model = sources.aiService.resolveConfiguredModel(rawProvider) {
+                    if case .custom = model {
+                        return model.supportsTools && sources.aiService.isModelAvailable(model) ? rawProvider : nil
+                    }
+                    if model.supportsTools, sources.aiService.isModelAvailable(model) {
+                        return rawProvider
+                    }
+                }
+
                 let parts = rawProvider.split(separator: "/", maxSplits: 1).map(String.init)
-                guard let provider = parts.first?.lowercased() else { return nil }
+                guard let providerID = parts.first else { return nil }
+                if sources.aiService.hasEnabledCustomProvider(matching: providerID) {
+                    return nil
+                }
+                let provider = providerID.lowercased()
                 if parts.count == 1 {
                     switch provider {
                     case "ollama" where sources.hasOllama:
@@ -210,6 +313,28 @@ extension PeekabooServices {
             .first
     }
 
+    private func hasUnavailableCustomProviderSelection(in sources: ModelSources) -> Bool {
+        sources.providers
+            .split(separator: ",")
+            .contains { entry in
+                let selection = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let providerID = selection
+                    .split(separator: "/", maxSplits: 1)
+                    .first
+                    .map(String.init),
+                    sources.aiService.hasEnabledCustomProvider(matching: providerID)
+                else {
+                    return false
+                }
+                guard let model = sources.aiService.resolveConfiguredModel(selection),
+                      case .custom = model
+                else {
+                    return true
+                }
+                return !model.supportsTools || !sources.aiService.isModelAvailable(model)
+            }
+    }
+
     private static func providerList(_ providers: String, containsToolCapableLocalProvider provider: String) -> Bool {
         providers
             .split(separator: ",")
@@ -249,6 +374,17 @@ extension PeekabooServices {
     }
 
     private static func isConfiguredDefaultAvailable(_ rawModel: String, sources: ModelSources) -> Bool {
+        if let model = sources.aiService.resolveConfiguredModel(rawModel) {
+            return model.supportsTools && sources.aiService.isModelAvailable(model)
+        }
+
+        let components = rawModel.split(separator: "/", maxSplits: 1)
+        if components.count == 2,
+           sources.aiService.hasEnabledCustomProvider(matching: String(components[0]))
+        {
+            return false
+        }
+
         guard let model = LanguageModel.parse(from: rawModel) else { return false }
         switch model {
         case .openai:
@@ -263,6 +399,8 @@ extension PeekabooServices {
             return sources.hasMiniMaxChina
         case .openRouter:
             return sources.hasOpenRouter
+        case .grok:
+            return sources.hasGrok
         case .ollama:
             return sources.hasOllama && model.supportsTools
         case .lmstudio:
@@ -284,27 +422,7 @@ extension PeekabooServices {
     }
 
     private static func isGeneratedProviderList(_ providers: String, configuredDefault: String?) -> Bool {
-        let entries = providers
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-
-        if entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-7"] {
-            return true
-        }
-
-        let entriesWithoutVisionFallback = entries.filter { entry in
-            entry != "ollama/llava" && entry != "ollama/llava:latest"
-        }
-
-        guard entriesWithoutVisionFallback.count == 1,
-              entriesWithoutVisionFallback.count < entries.count,
-              let entry = entriesWithoutVisionFallback.first,
-              let configuredDefault = configuredDefault?.lowercased(),
-              let model = entry.split(separator: "/", maxSplits: 1).last.map(String.init)
-        else {
-            return false
-        }
-        return model == configuredDefault || entry == configuredDefault
+        ConfigurationManager.isGeneratedAIProviderList(providers, configuredDefault: configuredDefault)
     }
 }
 
@@ -318,6 +436,7 @@ private enum EnvironmentVariables {
 /// Result of model determination with conflict detection.
 private struct ModelDetermination {
     let model: String?
+    let resolvedModel: LanguageModel?
     let hasConflict: Bool
     let configModel: String?
     let environmentModel: String?
@@ -332,9 +451,12 @@ private struct ModelSources {
     let hasMiniMaxChina: Bool
     let hasMiniMaxChinaSpecific: Bool
     let hasOpenRouter: Bool
+    let hasGrok: Bool
     let hasOllama: Bool
     let hasLMStudio: Bool
+    let customDefaultModel: LanguageModel?
     let configuredDefault: String?
+    let aiService: PeekabooAIService
     let isProviderListExplicit: Bool
     let isEnvironmentProvided: Bool
 }

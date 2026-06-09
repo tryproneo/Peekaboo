@@ -25,7 +25,7 @@ struct PeekabooAIServiceProviderTests {
               },
               "models": {
                 "mini": {
-                  "name": "gpt-5.4-mini",
+                  "name": "GPT-5.4 Mini",
                   "supportsVision": true
                 }
               }
@@ -47,13 +47,13 @@ struct PeekabooAIServiceProviderTests {
         let service = PeekabooAIService()
         let model = try #require(service.availableModels().first)
         #expect(service.availableModels().count == 1)
-        #expect(model.modelId == "local-proxy/gpt-5.4-mini")
+        #expect(model.modelId == "local-proxy/mini")
         #expect(model.supportsVision)
     }
 
     @Test
     @MainActor
-    func `Custom provider generation uses resolved Peekaboo provider credentials`() throws {
+    func `Custom provider generation uses model key and resolved credentials`() throws {
         try self.withIsolatedEnvironment(
             ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
             configurationJSON: """
@@ -70,7 +70,7 @@ struct PeekabooAIServiceProviderTests {
                   },
                   "models": {
                     "mini": {
-                      "name": "gpt-5.4-mini",
+                      "name": "GPT-5.4 Mini",
                       "supportsVision": true
                     }
                   }
@@ -118,7 +118,154 @@ struct PeekabooAIServiceProviderTests {
                 let provider = try service.tachikomaConfiguration(for: model).makeProvider(for: model)
 
                 #expect(String(describing: type(of: provider)).contains("PeekabooCustomProviderModel"))
+                #expect(Mirror(reflecting: provider).descendant("resolvedModelID") as? String == "mini")
                 #expect(Mirror(reflecting: provider).descendant("apiKey") as? String == "resolved-secret")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Saved custom provider models become default candidates`() throws {
+        try self.withIsolatedEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+
+                #expect(service.availableModels().count == 1)
+                #expect(model.modelId == "local-proxy/mini")
+                #expect(service.resolvedDefaultModel.modelId == "local-proxy/mini")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Custom provider model preserves configured tool capability`() throws {
+        try self.withIsolatedEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.5-mini",
+                      "supportsVision": true,
+                      "supportsTools": false
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+
+                #expect(model.modelId == "local-proxy/mini")
+                #expect(!model.supportsTools)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Custom provider IDs shadow hosted provider aliases`() throws {
+        try self.withIsolatedEnvironment(
+            [
+                "OPENROUTER_API_KEY": "built-in-key",
+                "PEEKABOO_CUSTOM_PROVIDER_KEY": "custom-secret",
+            ],
+            configurationJSON: """
+            {
+              "aiProviders": { "providers": "openrouter/mini" },
+              "customProviders": {
+                "openrouter": {
+                  "name": "Custom OpenRouter",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "custom-router-mini",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+                let provider = try service.tachikomaConfiguration(for: model).makeProvider(for: model)
+
+                #expect(model.modelId == "openrouter/mini")
+                #expect(String(describing: type(of: provider)).contains("PeekabooCustomProviderModel"))
+                #expect(Mirror(reflecting: provider).descendant("apiKey") as? String == "custom-secret")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Custom provider lookup preserves mixed case IDs`() throws {
+        try self.withIsolatedEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "custom-secret"],
+            configurationJSON: """
+            {
+              "aiProviders": { "providers": "OpenRouter/mini" },
+              "customProviders": {
+                "OpenRouter": {
+                  "name": "Mixed Case Provider",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "custom-router-mini",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+
+                #expect(model.modelId == "OpenRouter/mini")
             }
     }
 
@@ -164,8 +311,109 @@ struct PeekabooAIServiceProviderTests {
     func `Falls back to Gemini when only Gemini key is present`() throws {
         try self.withIsolatedEnvironment(["GEMINI_API_KEY": "key"]) {
             let service = PeekabooAIService()
-            #expect(service.resolvedDefaultModel == .google(.gemini3Flash))
-            #expect(service.availableModels() == [.google(.gemini3Flash)])
+            #expect(service.resolvedDefaultModel == .google(.gemini35Flash))
+            #expect(service.availableModels() == [.google(.gemini35Flash)])
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Custom built-in aliases allow legacy-looking model keys`() throws {
+        try self.withIsolatedEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "custom-secret"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "openai/gpt-4.1,anthropic/claude-3.5-sonnet"
+              },
+              "customProviders": {
+                "openai": {
+                  "name": "Custom OpenAI Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "gpt-4.1": {
+                      "name": "Proxy GPT",
+                      "supportsTools": true
+                    }
+                  }
+                },
+                "anthropic": {
+                  "name": "Custom Anthropic Proxy",
+                  "type": "anthropic",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8318",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "claude-3.5-sonnet": {
+                      "name": "Proxy Claude",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+
+                #expect(service.availableModels().map(\.modelId) == [
+                    "openai/gpt-4.1",
+                    "anthropic/claude-3.5-sonnet",
+                ])
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Built-in credentials take precedence over saved custom providers`() throws {
+        try self.withIsolatedEnvironment(
+            [
+                "GEMINI_API_KEY": "key",
+                "PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret",
+            ],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Display Name",
+                      "supportsVision": true,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+
+                #expect(service.resolvedDefaultModel == .google(.gemini35Flash))
+                #expect(service.availableModels() == [.google(.gemini35Flash)])
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Falls back to Grok when only xAI key is present`() throws {
+        try self.withIsolatedEnvironment(["X_AI_API_KEY": "key"]) {
+            let service = PeekabooAIService()
+            #expect(service.resolvedDefaultModel == .grok(.grok43))
+            #expect(service.availableModels() == [.grok(.grok43)])
+            #expect(TachikomaConfiguration.current.getAPIKey(for: .grok) == "key")
         }
     }
 
@@ -182,8 +430,8 @@ struct PeekabooAIServiceProviderTests {
             }
             """) {
                 let service = PeekabooAIService()
-                #expect(service.resolvedDefaultModel == .google(.gemini3Flash))
-                #expect(service.availableModels() == [.google(.gemini3Flash)])
+                #expect(service.resolvedDefaultModel == .google(.gemini35Flash))
+                #expect(service.availableModels() == [.google(.gemini35Flash)])
             }
     }
 
@@ -204,9 +452,9 @@ struct PeekabooAIServiceProviderTests {
             """) {
                 let service = PeekabooAIService()
                 let visionFallback = LanguageModel.ollama(.custom("llava:latest"))
-                #expect(service.resolvedDefaultModel == .google(.gemini3Flash))
-                #expect(service.resolvedDefaultVisionModel == .google(.gemini3Flash))
-                #expect(service.availableModels() == [.google(.gemini3Flash), visionFallback])
+                #expect(service.resolvedDefaultModel == .google(.gemini35Flash))
+                #expect(service.resolvedDefaultVisionModel == .google(.gemini35Flash))
+                #expect(service.availableModels() == [.google(.gemini35Flash), visionFallback])
             }
     }
 
@@ -263,8 +511,7 @@ struct PeekabooAIServiceProviderTests {
             }
             """) {
                 let service = PeekabooAIService()
-                #expect(service.resolvedDefaultModel == .minimax(.m27))
-                #expect(service.availableModels() == [.minimax(.m27)])
+                #expect(service.availableModels().isEmpty)
             }
     }
 
@@ -357,6 +604,27 @@ struct PeekabooAIServiceProviderTests {
                 let service = PeekabooAIService()
                 #expect(service.resolvedDefaultModel == .openai(.gpt55))
                 #expect(service.availableModels() == [.openai(.gpt55)])
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Explicit Grok provider list preserves server-redirected model slug`() throws {
+        try self.withIsolatedEnvironment(
+            ["X_AI_API_KEY": "key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "xai/grok-code-fast-1"
+              },
+              "agent": {
+                "defaultModel": "xai/grok-code-fast-1"
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+
+                #expect(service.availableModels() == [.grok(.custom("grok-code-fast-1"))])
             }
     }
 
@@ -466,6 +734,9 @@ struct PeekabooAIServiceProviderTests {
             "MINIMAX_API_KEY",
             "MINIMAX_CN_API_KEY",
             "OPENROUTER_API_KEY",
+            "X_AI_API_KEY",
+            "XAI_API_KEY",
+            "GROK_API_KEY",
             "API_KEY",
             "PEEKABOO_CUSTOM_PROVIDER_KEY",
             "PEEKABOO_MISSING_PROVIDER_KEY",
@@ -530,6 +801,9 @@ struct PeekabooAIServiceProviderTests {
             "MINIMAX_API_KEY",
             "MINIMAX_CN_API_KEY",
             "OPENROUTER_API_KEY",
+            "X_AI_API_KEY",
+            "XAI_API_KEY",
+            "GROK_API_KEY",
             "API_KEY",
             "PEEKABOO_CUSTOM_PROVIDER_KEY",
             "PEEKABOO_MISSING_PROVIDER_KEY",
@@ -574,7 +848,88 @@ struct PeekabooAIServiceProviderTests {
         TachikomaConfiguration.current.removeAPIKey(for: .google)
         TachikomaConfiguration.current.removeAPIKey(for: .minimax)
         TachikomaConfiguration.current.removeAPIKey(for: .minimaxCN)
+        TachikomaConfiguration.current.removeAPIKey(for: .grok)
         TachikomaConfiguration.current.removeAPIKey(for: .custom("openrouter"))
         TachikomaConfiguration.current.removeBaseURL(for: .ollama)
+    }
+}
+
+extension PeekabooAIServiceProviderTests {
+    @Test
+    @MainActor
+    func `Catalog-backed custom providers reject unknown model IDs`() throws {
+        try self.withIsolatedEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "custom-secret"],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "openrouter": {
+                  "name": "Custom OpenRouter",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "custom-router-mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+
+                #expect(service.resolveConfiguredModel("openrouter/mini")?.modelId == "openrouter/mini")
+                #expect(service.resolveConfiguredModel("openrouter/mni") == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Unavailable generated custom provider does not fall through to hosted credentials`() throws {
+        try self.withIsolatedEnvironment(
+            ["X_AI_API_KEY": "hosted-xai-key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "grok/mini,ollama/llava:latest"
+              },
+              "agent": {
+                "defaultModel": "grok/mini"
+              },
+              "customProviders": {
+                "grok": {
+                  "name": "Custom Grok",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_MISSING_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Proxy Mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+
+                #expect(model.modelId == "grok/mini")
+                #expect(!service.isModelAvailable(model))
+                if case .custom = model {
+                    // Expected custom routing.
+                } else {
+                    Issue.record("Expected unavailable custom provider model")
+                }
+            }
     }
 }

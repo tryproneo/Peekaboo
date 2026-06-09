@@ -14,6 +14,7 @@ struct AddCustomProviderView: View {
     @State private var name = ""
     @State private var description = ""
     @State private var type: Configuration.CustomProvider.ProviderType = .openai
+    @State private var modelId = ""
     @State private var baseURL = ""
     @State private var apiKey = ""
     @State private var headers = ""
@@ -210,6 +211,7 @@ struct AddCustomProviderView: View {
             name: self.$name,
             description: self.$description,
             type: self.$type,
+            modelId: self.$modelId,
             baseURL: self.$baseURL,
             apiKey: self.$apiKey,
             headers: self.$headers,
@@ -257,7 +259,11 @@ struct AddCustomProviderView: View {
     }
 
     private var isConfigurationValid: Bool {
-        !self.providerId.isEmpty && !self.name.isEmpty && !self.baseURL.isEmpty && !self.apiKey.isEmpty
+        !self.providerId.isEmpty &&
+            !self.name.isEmpty &&
+            !self.modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !self.baseURL.isEmpty &&
+            !self.apiKey.isEmpty
     }
 
     private func navigationAction() {
@@ -283,6 +289,7 @@ struct AddCustomProviderView: View {
         self.type = template.type
         self.baseURL = template.baseURL
         self.providerId = template.suggestedId
+        self.modelId = ""
     }
 
     func testConnection() {
@@ -327,7 +334,11 @@ struct AddCustomProviderView: View {
             description: self.description.isEmpty ? nil : self.description,
             type: self.type,
             options: options,
-            models: nil,
+            models: [
+                self.modelId.trimmingCharacters(in: .whitespacesAndNewlines):
+                    Configuration.ModelDefinition(
+                        name: self.modelId.trimmingCharacters(in: .whitespacesAndNewlines)),
+            ],
             enabled: true)
 
         do {
@@ -390,6 +401,7 @@ private struct ProviderConfigurationStepView: View {
     @Binding var name: String
     @Binding var description: String
     @Binding var type: Configuration.CustomProvider.ProviderType
+    @Binding var modelId: String
     @Binding var baseURL: String
     @Binding var apiKey: String
     @Binding var headers: String
@@ -441,6 +453,15 @@ private struct ProviderConfigurationStepView: View {
                                 }
                             }
                             .pickerStyle(.segmented)
+                        }
+
+                        FormField(
+                            title: "Model ID",
+                            binding: self.$modelId,
+                            placeholder: "provider-model-id")
+                        {
+                            Text("Exact model identifier exposed by this endpoint")
+                                .foregroundColor(.secondary)
                         }
 
                         FormField(

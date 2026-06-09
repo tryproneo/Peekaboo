@@ -13,9 +13,13 @@ func formatModelName(_ model: String) -> String {
     case "gpt-5.4-nano": "GPT-5.4 nano"
     case "gpt-5": "GPT-5"
     case "gpt-5-mini": "GPT-5 mini"
+    case "claude-opus-4-8": "Claude Opus 4.8"
     case "claude-opus-4-7": "Claude Opus 4.7"
+    case "claude-sonnet-4-6": "Claude Sonnet 4.6"
     case "claude-sonnet-4-5-20250929": "Claude Sonnet 4.5"
     case "claude-haiku-4.5": "Claude Haiku 4.5"
+    case "grok-4.3": "Grok 4.3"
+    case "gemini-3.5-flash": "Gemini 3.5 Flash"
     case "llava:latest": "LLaVA"
     case "llama3.2-vision:latest": "Llama 3.2"
     default: model

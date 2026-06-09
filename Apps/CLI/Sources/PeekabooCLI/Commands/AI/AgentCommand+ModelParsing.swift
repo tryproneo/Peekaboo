@@ -5,7 +5,11 @@ import Tachikoma
 
 @available(macOS 14.0, *)
 extension AgentCommand {
-    func parseModelString(_ modelString: String) -> LanguageModel? {
+    @MainActor
+    func parseModelString(
+        _ modelString: String,
+        configuration: PeekabooCore.ConfigurationManager? = nil
+    ) -> LanguageModel? {
         let trimmed = modelString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -13,6 +17,20 @@ extension AgentCommand {
             .split(separator: "/", maxSplits: 1)
             .first
             .map { String($0).lowercased() }
+
+        if let configuration {
+            if let configuredModel = PeekabooAIService(configuration: configuration).resolveConfiguredModel(trimmed),
+               case .custom = configuredModel {
+                return configuredModel.supportsTools ? configuredModel : nil
+            }
+
+            if let explicitProvider,
+               configuration.listCustomProviders().contains(where: { providerID, provider in
+                   provider.enabled && providerID.caseInsensitiveCompare(explicitProvider) == .orderedSame
+               }) {
+                return nil
+            }
+        }
 
         guard let parsed = LanguageModel.parse(from: trimmed) else {
             return nil
@@ -25,12 +43,14 @@ extension AgentCommand {
             }
         case let .anthropic(model):
             if Self.supportedAnthropicInputs.contains(model) {
-                return .anthropic(.opus47)
+                return .anthropic(.opus48)
             }
         case let .google(model):
             if Self.supportedGoogleInputs.contains(model) {
                 return .google(model)
             }
+        case .grok:
+            return parsed.supportsTools ? parsed : nil
         case let .minimax(model):
             if Self.supportedMiniMaxInputs.contains(model) {
                 return .minimax(model)
@@ -53,9 +73,10 @@ extension AgentCommand {
         return nil
     }
 
-    func validatedModelSelection() throws -> LanguageModel? {
+    @MainActor
+    func validatedModelSelection(configuration: PeekabooCore.ConfigurationManager? = nil) throws -> LanguageModel? {
         guard let modelString = self.model else { return nil }
-        guard let parsed = self.parseModelString(modelString) else {
+        guard let parsed = self.parseModelString(modelString, configuration: configuration) else {
             throw PeekabooError.invalidInput(
                 "Unsupported model '\(modelString)'. Allowed values: \(Self.allowedModelList)"
             )
@@ -75,6 +96,7 @@ extension AgentCommand {
     ]
 
     private static let supportedAnthropicInputs: Set<LanguageModel.Anthropic> = [
+        .opus48,
         .opus47,
         .opus45,
         .opus4,
@@ -84,6 +106,7 @@ extension AgentCommand {
     ]
 
     private static let supportedGoogleInputs: Set<LanguageModel.Google> = [
+        .gemini35Flash,
         .gemini31ProPreview,
         .gemini31FlashLite,
         .gemini3Flash,
@@ -102,6 +125,8 @@ extension AgentCommand {
         "anthropic",
         "google",
         "gemini",
+        "grok",
+        "xai",
         "minimax",
         "minimax-cn",
         "minimax_cn",
@@ -117,13 +142,56 @@ extension AgentCommand {
         let googleModels = Self.supportedGoogleInputs.map(\.userFacingModelId)
         let miniMaxModels = Self.supportedMiniMaxInputs.map(\.modelId)
         return (openAIModels + anthropicModels + googleModels + miniMaxModels + [
+            "grok/<model>",
+            "xai/<model>",
             "minimax-cn/<model>",
             "ollama/<model>",
             "lmstudio/<model>",
             "openrouter/<provider>/<model>",
+            "<custom-provider>/<model>",
         ])
         .sorted()
         .joined(separator: ", ")
+    }
+
+    @MainActor
+    func firstAvailableToolModel(from service: PeekabooAIService) -> LanguageModel? {
+        service.availableModels().first { model in
+            model.supportsTools && service.isModelAvailable(model)
+        }
+    }
+
+    @MainActor
+    func configuredDefaultToolModel(
+        from service: PeekabooAIService,
+        configuration: PeekabooCore.ConfigurationManager
+    ) -> LanguageModel? {
+        guard let defaultModel = configuration.getAgentModel(),
+              let model = service.resolveConfiguredModel(defaultModel),
+              model.supportsTools,
+              service.isModelAvailable(model)
+        else {
+            return nil
+        }
+        return model
+    }
+
+    @MainActor
+    func implicitToolModel(
+        from service: PeekabooAIService,
+        configuration: PeekabooCore.ConfigurationManager,
+        existingAgentModel: LanguageModel?
+    ) -> LanguageModel? {
+        if let existingAgentModel {
+            return existingAgentModel
+        }
+
+        if configuration.hasExplicitAIProviderList() {
+            return nil
+        }
+
+        return self.configuredDefaultToolModel(from: service, configuration: configuration) ??
+            self.firstAvailableToolModel(from: service)
     }
 
     @MainActor
@@ -142,8 +210,12 @@ extension AgentCommand {
             return configuration.getMiniMaxAPIKey()?.isEmpty == false
         case .minimaxCN:
             return configuration.getMiniMaxChinaAPIKey()?.isEmpty == false
+        case .grok:
+            return configuration.getGrokAPIKey()?.isEmpty == false
         case .openRouter:
             return configuration.getOpenRouterAPIKey()?.isEmpty == false
+        case let .custom(provider):
+            return provider.apiKey?.isEmpty == false
         default:
             return false
         }
@@ -167,6 +239,10 @@ extension AgentCommand {
             "LM Studio"
         case .openRouter:
             "OpenRouter"
+        case .grok:
+            "xAI"
+        case let .custom(provider):
+            "custom provider \(provider.modelId)"
         default:
             "the selected provider"
         }
@@ -190,6 +266,10 @@ extension AgentCommand {
             "LM Studio local server URL"
         case .openRouter:
             "OPENROUTER_API_KEY"
+        case .grok:
+            "X_AI_API_KEY, XAI_API_KEY, or GROK_API_KEY"
+        case .custom:
+            "the custom provider API key reference"
         default:
             "provider API key"
         }

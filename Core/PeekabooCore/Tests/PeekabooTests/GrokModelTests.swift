@@ -14,13 +14,18 @@ struct GrokLanguageModelTests {
         let grokReasoning = LanguageModel.grok(.grok420Reasoning)
         let grokNonReasoning = LanguageModel.grok(.grok420NonReasoning)
 
-        for model in [grok43, grokMultiAgent, grokReasoning, grokNonReasoning] {
+        for model in [grok43, grokReasoning, grokNonReasoning] {
             #expect(model.providerName == "Grok")
             #expect(model.modelId.contains("grok"))
             #expect(model.supportsTools == true)
             #expect(model.supportsStreaming == true)
-            #expect(model.supportsVision == false)
         }
+
+        #expect(grok43.supportsVision == true)
+        #expect(grokMultiAgent.supportsVision == false)
+        #expect(grokMultiAgent.supportsTools == false)
+        #expect(grokReasoning.supportsVision == true)
+        #expect(grokNonReasoning.supportsVision == true)
     }
 
     @Test
@@ -42,7 +47,8 @@ struct GrokLanguageModelTests {
             #expect(!model.modelId.isEmpty)
         }
 
-        #expect(catalog.allSatisfy { $0.supportsVision == false })
+        #expect(LanguageModel.grok(.grok43).supportsVision == true)
+        #expect(catalog.count(where: { $0.supportsVision }) == catalog.count)
     }
 
     @Test
