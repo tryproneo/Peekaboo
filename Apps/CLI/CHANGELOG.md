@@ -5,7 +5,10 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.4.1] - Unreleased
+## [3.4.1] - 2026-06-10
+
+### Fixed
+- `peekaboo agent` now resolves saved custom providers, xAI/Grok, Gemini 3.5 Flash, Claude Opus 4.8, and GPT-5.5 model selections before falling back to unavailable built-in defaults. Thanks @udiedrichsen for #182.
 
 ## [3.4.0] - 2026-06-07
 
